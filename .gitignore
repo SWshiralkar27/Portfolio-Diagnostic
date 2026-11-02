@@ -1,0 +1,23 @@
+# Private or generated: never commit (GitHub web upload ignores this file, so also run check_repo_safe.py)
+holdings*
+*statement*
+evidence.csv
+evidence_auto.csv
+buy_dates.csv
+cost_overrides.csv
+input_skips.csv
+verified_flags.csv
+last_run_snapshot.csv
+carry_over*
+broker_shape_report.txt
+diagnostic_output/
+legacy/
+.cache/
+*.xlsx
+*.xls
+*.pdf
+*.pkl
+*.bak*
+.env
+secrets.toml
+__pycache__/

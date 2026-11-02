@@ -1,0 +1,9 @@
+# Unpinned on purpose until the Step 26 hosting test shows which versions work; pin them then.
+pandas
+numpy
+openpyxl
+yfinance
+requests
+dalal
+streamlit
+# pdfplumber    # only when the PDF broker-statement step is built
