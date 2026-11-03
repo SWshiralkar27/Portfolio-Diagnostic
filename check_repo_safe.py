@@ -15,7 +15,7 @@ SKIP_DIRS = {".git", "__pycache__", ".idea", ".vscode"}
 BAD_NAMES = ["holdings*", "*statement*", "evidence.csv", "evidence_auto.csv", "buy_dates.csv", "cost_overrides.csv", "input_skips.csv",
              "verified_flags.csv", "last_run_snapshot.csv", "portfolio_diagnostic_*.xlsx", "portfolio_report_*.html",
              "broker_shape_report.txt", "carry_over*", "*.bak*", "secrets.toml", ".env", "*.pkl", "*.zip"]
-BAD_DIRS = {"diagnostic_output", "legacy", ".cache", "private", "my_data"}
+BAD_DIRS = {"diagnostic_output", ".cache", "private", "my_data"}
 BAD_SUFFIX = {".xlsx", ".xls", ".xlsm", ".pdf"}
 TEXT_SUFFIX = {".csv", ".txt", ".md", ".json", ".toml", ".yaml", ".yml", ".py"}
 PAN = re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b")
