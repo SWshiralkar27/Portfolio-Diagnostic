@@ -44,6 +44,8 @@ class YahooProvider:
 
 class NSEProvider:
     BASE = "https://www.nseindia.com"
+    STRICT = False      # app mode: a refused NSE home page (HTTP 403) marks NSE unavailable instead of silently returning empty lists
+    refused = None
     HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0 Safari/537.36", "Referer": "https://www.nseindia.com/"}
     def __init__(self, timeout=8):
         self.available = HAS_REQUESTS; self.timeout = timeout
@@ -52,7 +54,9 @@ class NSEProvider:
         self._primed = False; self._asm = None; self._gsm = None
     def _prime(self):
         if self._primed or not self.available: return self.available
-        try: self.session.get(self.BASE, timeout=self.timeout); self._primed = True
+        try:
+            r = self.session.get(self.BASE, timeout=self.timeout); self._primed = True
+            if self.STRICT and getattr(r, "status_code", 200) != 200: self.available, self.refused = False, r.status_code
         except: self.available = False
         return self.available
     def _get(self, path, **params):

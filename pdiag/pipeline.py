@@ -36,6 +36,7 @@ class RunOptions:
     refresh_evidence: bool = False
     demo: bool = False
     review_date: Optional[str] = None
+    strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
 
 
 class RunContext:
@@ -151,6 +152,9 @@ def stage_prices(ctx):
     HD["Weight"] = HD.Value / HD.Value.sum() * 100
     HD["PnL"] = (HD.Value - HD.Invested).where(HD.Priced)
     HD["PnLPct"] = HD.PnL / HD.Invested * 100
+    if options.strict_nse and not getattr(getattr(provider, "nse", None), "available", True):
+        ctx.notes_global.append("NSE ASM/GSM surveillance lists and NSE corporate actions were NOT checked: the NSE website refused this server's connection"
+                                f" (HTTP {getattr(provider.nse, 'refused', None) or 'error'}). A blank Surveillance cell means 'not checked', not 'clear'.")
     ctx.review_date, ctx.tick, ctx.H, ctx.B, ctx.broad, ctx.HD = review_date, tick, H, B, broad, HD
     return ctx
 

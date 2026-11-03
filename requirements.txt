@@ -1,9 +1,9 @@
-# Unpinned on purpose until the Step 26 hosting test shows which versions work; pin them then.
-pandas
-numpy
-openpyxl
-yfinance
-requests
-dalal
-streamlit
+# Versions below are the ones the Step 26 hosting test ran on Streamlit's servers (3 Nov 2026): Python 3.14.10.
+streamlit==1.66.1
+pandas==3.1.0
+yfinance==1.7.0
+dalal==0.2.1
+requests==2.34.2
+numpy>=2.0
+openpyxl>=3.1
 # pdfplumber    # only when the PDF broker-statement step is built

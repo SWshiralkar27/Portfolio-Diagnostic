@@ -159,7 +159,7 @@
   "NSEProvider": {
    "module": "providers",
    "sha": "3d42bd3fa8f72f61d9ea1b98566e1e4902dcc75339de5f66d300d10b6149074f",
-   "verbatim": true
+   "verbatim": false
   },
   "CompositeProvider": {
    "module": "providers",
