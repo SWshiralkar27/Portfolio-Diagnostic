@@ -3,6 +3,7 @@
 Run from IDLE (F5) in the project folder. SYNTHETIC data only (tests/mock_world.py): no network, no real portfolio.
   A  carry-over pack, buy dates, promoter inputs and the cost-review answers behave as designed
   B  strict NSE mode: a refused NSE site is reported as 'not checked' (and the default behaviour is unchanged)
+  D  Step 28b: company info that Yahoo refuses (reported, paced, last good copy reused) and the unknown-sector guard
   C  the page itself, driven step by step with Streamlit's test runner: upload -> forms -> results -> carry-over pack -> second run
 """
 from __future__ import annotations
@@ -63,7 +64,7 @@ def main():
         pack_bytes = ac.build_pack(MemoryState(auto_csv=(tmp / "out" / "evidence_auto.csv").read_bytes(), snapshot_csv=b"Symbol,Weighted,FinalLabel,Review_Risk\nAAA,2.5,Neutral,\n"),
                                    bd, pd.DataFrame([dict(symbol="EEE", decision="confirmed", factor=np.nan)], columns=ac.DEC_COLS))
         names = set(zipfile.ZipFile(io.BytesIO(pack_bytes)).namelist())
-        check("the pack holds the five expected files", names == {"evidence_auto.csv", "last_run_snapshot.csv", "buy_dates.csv", "cost_decisions.csv", "pack_info.json"}, str(names))
+        check("the pack holds the six expected files", names == {"evidence_auto.csv", "last_run_snapshot.csv", "buy_dates.csv", "cost_decisions.csv", "company_info.json", "pack_info.json"}, str(names))
         pk = ac.parse_pack(pack_bytes)
         lots3, n3 = ac.apply_saved_buy_dates(lots, pk["buy_dates"])
         check("a later run fills the saved date back in from the pack", n3 == 1 and lots3.loc[lots3.symbol == "BBB", "buy_date"].notna().all())
@@ -120,16 +121,78 @@ def main():
         q = NSEProvider(); q.session = Sess(403)
         check("real NSEProvider, default: unchanged (still treated as available)", q._prime() is True and q.available is True)
 
+        print("\n[D] Step 28b - company info refused by Yahoo, saved copy, unknown-sector guard")
+        from pdiag.resilient import ResilientProvider, STALE_DAYS, BREAKER
+        class Blind(mw.MockProvider):
+            """Yahoo answers prices and statements but returns no company info (what the first hosted run saw)."""
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k); self.info_calls = 0
+            def info(self, tkr):
+                self.info_calls += 1; return {}
+        rp = ResilientProvider(mw.MockProvider(), pace=0)
+        got = rp.info("AAA.NS")
+        check("answer from Yahoo is passed through unchanged and the last good copy is kept (8 keys only)", got == mw.MockProvider().info("AAA.NS") and set(rp.company_info_store()["AAA.NS"]["info"]) <= {"sector", "marketCap", "trailingPE", "priceToBook", "returnOnEquity", "enterpriseToEbitda", "enterpriseToRevenue", "trailingEps"} and rp.status["AAA.NS"] == "fresh")
+        check("prices, statements and the provider name pass straight through", rp.history("AAA.NS", "2020-01-01", "2026-01-01") is not None and "fin" in rp.statements("AAA.NS") and rp.name == "Mock")
+        bl = Blind(); rb = ResilientProvider(bl, pace=0)
+        for i in range(30): rb.info(f"S{i}.NS")
+        check(f"a refusing Yahoo is asked only {BREAKER} times in a row, then the app stops asking (the run cannot hang)", bl.info_calls == BREAKER, str(bl.info_calls))
+        nt = " ".join(rb.info_notes())
+        check("Data_Gaps wording says NOT returned and that the app stopped asking; STATUS reason names the count", "NOT returned" in nt and "stopped asking" in nt and "company info missing for 30 of 30" in rb.info_reasons()[0], nt)
+        bl2 = Blind(); r2 = ResilientProvider(bl2, pace=0)
+        for i in range(BREAKER - 1): r2.info(f"X{i}.NS")
+        mixed = type("M", (Blind,), {"info": lambda self, t: ({} if t.startswith("X") else mw.MockProvider().info(t))})()
+        r3 = ResilientProvider(mixed, pace=0)
+        for i in range(BREAKER - 1): r3.info(f"X{i}.NS")
+        r3.info("AAA.NS")
+        for i in range(BREAKER - 1): r3.info(f"Y{i}.NS") if False else r3.info(f"X{i + 50}.NS")
+        check("one good answer resets the count of failures in a row", not r3._tripped)
+        today = pd.Timestamp.today().normalize()
+        sv = {"AAA.NS": dict(fetched=(today - pd.Timedelta(days=5)).strftime("%Y-%m-%d"), info={"sector": "Financial Services", "marketCap": 2e12, "trailingPE": 18.0}),
+              "BBB.NS": dict(fetched=(today - pd.Timedelta(days=STALE_DAYS + 10)).strftime("%Y-%m-%d"), info={"sector": "Technology", "marketCap": 1e11, "trailingPE": 25.0})}
+        rs = ResilientProvider(Blind(), stored=sv, pace=0)
+        a, b, c = rs.info("AAA.NS"), rs.info("BBB.NS"), rs.info("CCC.NS")
+        check("saved copy used when Yahoo does not answer: recent copy in full, an old copy gives the sector only, no copy gives nothing",
+              a.get("trailingPE") == 18.0 and b == {"sector": "Technology"} and c == {} and [rs.status[k] for k in ("AAA.NS", "BBB.NS", "CCC.NS")] == ["saved", "saved-sector-only", "missing"], str((a, b, c)))
+        nt = " ".join(rs.info_notes())
+        check("the note says the copy is from the carry-over pack and gives its age; the 40-day copy is called out", "carry-over pack" in nt and "5-40 days" in nt and "only the sector was reused" in nt, nt)
+        pk2 = ac.parse_pack(ac.build_pack(MemoryState(auto_csv=b"symbol\nAAA\n"), ac.empty_pack()["buy_dates"], ac.empty_pack()["cost_decisions"], company_info=dict(sv, BAD="oops")))
+        check("company info survives the carry-over pack round trip; a malformed entry is dropped", pk2["company_info"] == sv, str(pk2["company_info"].keys()))
+
+        def lots_no_sector():
+            l = load_holdings(tmp / "holdings.csv"); l["sector_type"] = np.nan; l["sector"] = np.nan; return l
+        def review(provider, guard):
+            from pdiag.loaders import evidence_from_df, read_table as _rt
+            c = staged(mw, tmp, lots=lots_no_sector(), provider=provider, manual=evidence_from_df(_rt(tmp / "evidence.csv")), options=RunOptions(fetch_evidence=False, unknown_sector_guard=guard))
+            apply_cost_review(c, ac.FormHooks())
+            r = stage_analysis(c)
+            return c, r, r.sheets["Scorecard_A"].set_index("Symbol")
+        c_off, r_off, sc_off = review(Blind(), False)
+        c_on, r_on, sc_on = review(Blind(), True)
+        hard = lambda sc, s_: "HARD OVERRIDE: Earnings-quality" in str(sc.loc[s_, "Review_Risk"])
+        check("guard OFF (default, as before): a lender-like cash-flow pattern is a hard override and the sector reads 'standard'", hard(sc_off, "FFF") and sc_off.loc["FFF", "SectorType"] == "standard")
+        check("guard ON, sector unknown: the same flag is a risk tag ('Earnings-quality note'), the sector reads 'unknown'",
+              (not hard(sc_on, "FFF")) and "Earnings-quality note" in str(sc_on.loc["FFF", "Review_Risk"]) and sc_on.loc["FFF", "SectorType"] == "unknown", str(sc_on.loc["FFF", ["SectorType", "Review_Risk"]].tolist()))
+        check("guard ON leaves the other hard overrides alone (pledge on DDD, negative net worth on NEG)",
+              "HARD" in str(sc_on.loc["DDD", "Review_Risk"]) and "HARD" in str(sc_on.loc["NEG", "Review_Risk"]) and sc_on.FinalLabel.eq("Candidate for review").sum() == sc_off.FinalLabel.eq("Candidate for review").sum() - 1,
+              f"{sc_on.FinalLabel.eq('Candidate for review').sum()} vs {sc_off.FinalLabel.eq('Candidate for review').sum()}")
+        gp = r_on.sheets["Data_Gaps"]
+        check("guard ON: Data_Gaps says the sector is unknown for N stocks; guard OFF: no such line", gp.Impact.astype(str).str.contains("Sector unknown for").any() and not r_off.sheets["Data_Gaps"].Impact.astype(str).str.contains("Sector unknown").any())
+        fin_store = {"FFF.NS": dict(fetched=today.strftime("%Y-%m-%d"), info={"sector": "Financial Services", "marketCap": 5e11, "trailingPE": 12.0, "priceToBook": 2.0})}
+        _, _, sc_fin = review(ResilientProvider(Blind(), stored=fin_store, pace=0), True)
+        check("a saved copy that knows the sector rescues it: treated as a financial, so no cash-flow flag at all",
+              sc_fin.loc["FFF", "SectorType"] == "financial" and "Earnings-quality" not in str(sc_fin.loc["FFF", "Review_Risk"]), str(sc_fin.loc["FFF", ["SectorType", "Review_Risk"]].tolist()))
+
         print("\n[C] the page, driven with Streamlit's test runner")
         from streamlit.testing.v1 import AppTest
         pack0 = ac.build_pack(MemoryState(auto_csv=(tmp / "out" / "evidence_auto.csv").read_bytes()), ac.empty_pack()["buy_dates"], ac.empty_pack()["cost_decisions"])
         files = dict(holdings=(tmp / "holdings.csv").read_bytes(), pack=pack0, evidence=(tmp / "evidence.csv").read_bytes(), peers=(tmp / "peers.csv").read_bytes())
         empty = tmp / "cwd"; empty.mkdir(); os.chdir(empty)
 
-        def drive(pack_bytes):
-            f = dict(files, pack=pack_bytes)
+        def drive(pack_bytes, factory=None, hold=None):
+            f = dict(files, pack=pack_bytes, **({"holdings": hold} if hold else {}))
             at = AppTest.from_file(str(HERE / "app.py"), default_timeout=180)
-            at.session_state["_provider_factory"] = mw.MockProvider
+            at.session_state["_provider_factory"] = factory or mw.MockProvider
+            at.session_state["_pace"] = 0
             at.session_state["_test_files"] = f
             at.run()
             first = (not at.exception, at.session_state["stage"], [b.key for b in at.button])
@@ -158,6 +221,19 @@ def main():
         xs2 = pd.read_excel(io.BytesIO(at2.session_state["out"]["xlsx"]), sheet_name=None) if a3 == (True, "done") else {}
         check("second run with the pack from the first: finishes and shows real score changes (Score_Delta filled)", a3 == (True, "done") and xs2 and xs2["Scorecard_A"]["Score_Delta"].notna().any(), str((a1, a2, a3)))
         check("second run reuses the evidence cache: Data_Gaps and sheets match the first run", xs2 and list(xs2) == list(xs))
+        pk1 = ac.parse_pack(out["pack"])
+        check("the first run's pack carries last good company info for the stocks it looked up", len(pk1["company_info"]) >= 14 and all(v["info"] for v in pk1["company_info"].values()), str(len(pk1["company_info"])))
+        atb, fb, b1, b2, b3 = drive(out["pack"], factory=Blind)
+        ob = atb.session_state["out"] if b3 == (True, "done") else {}
+        xb = pd.read_excel(io.BytesIO(ob["xlsx"]), sheet_name=None) if ob else {}
+        check("Yahoo refuses company info but the pack has it: the run finishes, sector/cap tier/valuation are still filled, and the page says so",
+              b3 == (True, "done") and xb["Scorecard_A"].CapTier.notna().sum() >= 10 and (xb["Evidence"].Factor.str.startswith("F5").sum() > 0)
+              and any("carry-over pack" in n for n in ob["notes"]) and "carry-over pack" in ob["status"], str((b3, ob.get("notes"), ob.get("status"))))
+        h_nosec = pd.read_csv(tmp / "holdings.csv").assign(sector_type="", sector="").to_csv(index=False).encode()      # a file like yours: no sector columns filled
+        atc, fc, c1_, c2_, c3_ = drive(pack0, factory=Blind, hold=h_nosec)
+        oc = atc.session_state["out"] if c3_ == (True, "done") else {}
+        check("Yahoo refuses and there is no saved copy: the run still finishes, and STATUS and Data_Gaps say plainly that company info is missing",
+              c3_ == (True, "done") and "company info missing" in oc["status"] and any("NOT returned" in n for n in oc["notes"]) and any("Sector unknown" in n for n in oc["notes"]), str((c3_, oc.get("status"), oc.get("notes"))))
         left = [str(p) for p in empty.rglob("*")]
         check("the page wrote no files to disk during either run", not left, str(left[:5]))
     except Exception:

@@ -5,6 +5,7 @@ Carry-over pack = one .zip the user downloads at the end of a run and uploads at
   last_run_snapshot.csv this run's scores (so the next run can show Score change)
   buy_dates.csv         buy dates the user typed (symbol, quantity, buy_price, buy_date)
   cost_decisions.csv    cost lines the user confirmed or corrected (symbol, decision, factor)
+  company_info.json     last good Yahoo company info per stock (used, labelled with its age, when Yahoo does not answer)
   pack_info.json        tool version and date
 The pack holds private information (dates, costs, the list of stocks). It is for the user's own device only.
 """
@@ -46,7 +47,7 @@ def progress_to(bar):
 
 # ---------------- carry-over pack ----------------
 def empty_pack():
-    return dict(auto_csv=None, snapshot_csv=None, buy_dates=pd.DataFrame(columns=BUY_COLS), cost_decisions=pd.DataFrame(columns=DEC_COLS), info={})
+    return dict(auto_csv=None, snapshot_csv=None, buy_dates=pd.DataFrame(columns=BUY_COLS), cost_decisions=pd.DataFrame(columns=DEC_COLS), company_info={}, info={})
 
 
 def _bytes(src):
@@ -78,12 +79,15 @@ def parse_pack(src):
     dec["factor"] = pd.to_numeric(dec["factor"], errors="coerce")
     try: info = json.loads(zf.read("pack_info.json")) if "pack_info.json" in names else {}
     except Exception: info = {}
+    try: cinfo = json.loads(zf.read("company_info.json")) if "company_info.json" in names else {}
+    except Exception: cinfo = {}
+    cinfo = {k: v for k, v in cinfo.items() if isinstance(v, dict) and isinstance(v.get("info"), dict) and v.get("fetched")}
     return dict(auto_csv=zf.read("evidence_auto.csv") if "evidence_auto.csv" in names else None,
                 snapshot_csv=zf.read("last_run_snapshot.csv") if "last_run_snapshot.csv" in names else None,
-                buy_dates=bd.dropna(subset=["buy_date"]).reset_index(drop=True), cost_decisions=dec.reset_index(drop=True), info=info)
+                buy_dates=bd.dropna(subset=["buy_date"]).reset_index(drop=True), cost_decisions=dec.reset_index(drop=True), company_info=cinfo, info=info)
 
 
-def build_pack(state, buy_dates, cost_decisions):
+def build_pack(state, buy_dates, cost_decisions, company_info=None):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, text in state.carry_over_csv().items():
@@ -92,6 +96,7 @@ def build_pack(state, buy_dates, cost_decisions):
         if len(bd): bd["buy_date"] = pd.to_datetime(bd["buy_date"]).dt.strftime("%Y-%m-%d")
         zf.writestr("buy_dates.csv", bd[BUY_COLS].to_csv(index=False))
         zf.writestr("cost_decisions.csv", cost_decisions[DEC_COLS].to_csv(index=False))
+        zf.writestr("company_info.json", json.dumps(company_info or {}))
         zf.writestr("pack_info.json", json.dumps(dict(tool_version=VERSION, created=dt.datetime.now().isoformat(timespec="seconds"),
                                                       note="Private: buy dates, cost decisions and your list of stocks. Keep on your own device.")))
     return buf.getvalue()
@@ -213,8 +218,11 @@ class FormHooks(NullHooks):
         return HD, set(self.confirmed), dict(self.factors)
 
 
-def package_outputs(res, state, pack, decisions, shown_cost_symbols=()):
+def package_outputs(res, state, pack, decisions, shown_cost_symbols=(), company_info=None):
     """Everything the user downloads at the end of a run."""
     dec = merge_decisions(pack["cost_decisions"], decisions, shown_cost_symbols)
-    return dict(html=render_result_html(res), xlsx=build_xlsx_bytes(res.sheets), pack=build_pack(state, pack["buy_dates"], dec),
-                n_sheets=int(sum(1 for v in res.sheets.values() if len(v) > 0)))
+    gaps = res.sheets["Data_Gaps"]
+    return dict(html=render_result_html(res), xlsx=build_xlsx_bytes(res.sheets), pack=build_pack(state, pack["buy_dates"], dec, company_info),
+                n_sheets=int(sum(1 for v in res.sheets.values() if len(v) > 0)),
+                status=next((x for x in res.summary if str(x).startswith("STATUS")), ""),
+                notes=[str(x) for x in gaps.loc[gaps.Item == "portfolio", "Impact"]] if len(gaps) else [])

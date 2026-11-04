@@ -82,7 +82,9 @@ def fundamentals(info: dict, st: dict, sector_type: str) -> dict:
         if len(j) >= 2 and latest_fy is not None and j.index[-1] == latest_fy and j.ni.sum() > 0:
             cum_cfo, cum_ni = float(j.cfo.sum()), float(j.ni.sum())
             if cum_cfo <= 0:
-                o["eq_flag"] = f"cumulative CFO over the last {len(j)} years is negative ({cum_cfo / 1e7:,.0f} Cr) against cumulative PAT of {cum_ni / 1e7:,.0f} Cr"
+                _msg = f"cumulative CFO over the last {len(j)} years is negative ({cum_cfo / 1e7:,.0f} Cr) against cumulative PAT of {cum_ni / 1e7:,.0f} Cr"
+                if sector_type == "unknown": o["eq_note"] = _msg + " (sector unknown: a lender shows negative operating cash flow by design, so this is a risk tag, not a hard override)"
+                else: o["eq_flag"] = _msg
             elif cum_cfo / cum_ni < 0.5:
                 o["eq_note"] = f"cumulative CFO/PAT over the last {len(j)} years is {cum_cfo / cum_ni:.2f} (CFO {cum_cfo / 1e7:,.0f} Cr vs PAT {cum_ni / 1e7:,.0f} Cr)"
             try:

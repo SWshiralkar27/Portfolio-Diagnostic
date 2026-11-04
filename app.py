@@ -19,6 +19,7 @@ try:
     from pdiag.loaders import read_table, holdings_from_df, evidence_from_df, peers_from_df
     from pdiag.pipeline import RunOptions, new_context, stage_evidence, stage_prices, apply_cost_review, stage_analysis
     from pdiag.providers import CompositeProvider
+    from pdiag.resilient import ResilientProvider
     from pdiag.state import MemoryState
 except Exception as e:                                   # a library or a file is missing: say so plainly
     st.error(f"The app could not load its code ({type(e).__name__}: {e}). Check that the pdiag folder and the engine files are in the repository.")
@@ -40,13 +41,16 @@ def pick(key, uploaded, fname):
     return named(fname, raw) if raw is not None else None
 
 
-def make_provider():
-    if S.get("_provider_factory"): return S["_provider_factory"]()
-    tmp = Path(tempfile.mkdtemp(prefix="pdiag_"))
-    S["_tmp"] = str(tmp)
-    p = CompositeProvider(tmp / ".cache", use_cache=False)      # market data only; nothing of yours is cached
-    p.nse.STRICT = True                                         # a refused NSE site is reported, not read as "clear"
-    return p
+def make_provider(stored):
+    """Yahoo + NSE, wrapped so a refusal is reported and the last good company info (from your pack) fills the gap."""
+    if S.get("_provider_factory"):
+        inner = S["_provider_factory"]()
+    else:
+        tmp = Path(tempfile.mkdtemp(prefix="pdiag_"))
+        S["_tmp"] = str(tmp)
+        inner = CompositeProvider(tmp / ".cache", use_cache=False)      # market data only; nothing of yours is cached
+        inner.nse.STRICT = True                                         # a refused NSE site is reported, not read as "clear"
+    return ResilientProvider(inner, stored=stored, pace=S.get("_pace", 0.25))
 
 
 def wipe():
@@ -93,10 +97,10 @@ if S.stage == "upload":
             pack = ac.parse_pack(pk) if pk is not None else ac.empty_pack()
             lots, n_saved = ac.apply_saved_buy_dates(lots, pack["buy_dates"])
             ev, pf, vf = pick("evidence", f_ev, "evidence.csv"), pick("peers", f_peers, "peers.csv"), pick("verified", f_ver, "verified_flags.csv")
-            ctx = new_context(lots, make_provider(), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
+            ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
                               manual_evid=evidence_from_df(read_table(ev)) if ev is not None else {},
                               peers=peers_from_df(read_table(pf)) if pf is not None else {},
-                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True),
+                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True),
                               verified=read_table(vf) if vf is not None else None)
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
             stage_evidence(ctx)
@@ -159,7 +163,8 @@ elif S.stage == "form_b":
             bar = st.progress(0.0, text="Analysing"); ctx.progress = ac.progress_to(bar)
             apply_cost_review(ctx, ac.FormHooks(confirmed, factors))
             res = stage_analysis(ctx)
-            out = ac.package_outputs(res, ctx.state, S.pack, decisions, shown_cost_symbols=list(cand.symbol))
+            out = ac.package_outputs(res, ctx.state, S.pack, decisions, shown_cost_symbols=list(cand.symbol),
+                                     company_info=getattr(ctx.provider, "company_info_store", lambda: {})())
         except Exception as e:
             wipe(); fail("The analysis", e)
         wipe()                                           # raw holdings and fetched data leave memory; only the outputs stay
@@ -175,7 +180,11 @@ else:
     c[1].download_button("Workbook (Excel)", out["xlsx"], f"portfolio_diagnostic_{stamp}.xlsx",
                          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="dl_xlsx", on_click="ignore")
     c[2].download_button("Carry-over pack (.zip) - keep on your device", out["pack"], f"carry_over_pack_{stamp}.zip", "application/zip", key="dl_pack", on_click="ignore")
-    st.info("Upload the carry-over pack at your next run: NSE evidence already fetched, your buy dates and cost decisions are then reused, so the run is faster.")
+    if "PROVISIONAL" in out.get("status", "") or out.get("notes"):
+        with st.expander("Run notes: what could not be checked this time", expanded=True):
+            if out.get("status"): st.warning(out["status"])
+            for n in out.get("notes", []): st.write("- " + n)
+    st.info("Upload the carry-over pack at your next run: NSE evidence already fetched, your buy dates, cost decisions and last good company info are then reused, so the run is faster and survives a Yahoo refusal.")
     if st.button("Start a new run", key="again"):
         wipe(); S.pop("out", None); S.stage = "upload"; st.rerun()
     st.iframe(out["html"], height=1100)           # the report is built by this app; text from NSE and your files is escaped inside it

@@ -37,6 +37,7 @@ class RunOptions:
     demo: bool = False
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
+    unknown_sector_guard: bool = False      # app mode: no sector from you or Yahoo -> SectorType 'unknown' and a cash-flow flag is a risk tag, not a hard override
 
 
 class RunContext:
@@ -207,7 +208,7 @@ def stage_analysis(ctx):
         stype = HD.loc[s, "SectorType"]
         if not stype:
             sec = str(info.get("sector", "")).lower()
-            HD.loc[s, "SectorType"] = ("financial" if "financial" in sec else "cyclical" if sec in ("basic materials", "energy") else "standard")
+            HD.loc[s, "SectorType"] = ("financial" if "financial" in sec else "cyclical" if sec in ("basic materials", "energy") else "unknown" if (options.unknown_sector_guard and not sec) else "standard")
         if not HD.loc[s, "CapTier"] and info.get("marketCap"):
             cr = info["marketCap"] / 1e7
             HD.loc[s, "CapTier"] = ("Large" if cr >= CFG["CAP_LARGE_CR"] else "Mid" if cr >= CFG["CAP_MID_CR"] else "Small") + " (approx)"
@@ -265,6 +266,9 @@ def stage_analysis(ctx):
         perf[s] = P
         fundd[s] = (fundamentals(info, provider.statements(t), HD.loc[s, "SectorType"]) if HD.loc[s, "AssetType"] == "equity" else {})
         
+    _n_unk = int((HD.SectorType == "unknown").sum())
+    if _n_unk:
+        notes_global.append(f"Sector unknown for {_n_unk} stocks (not in your file and Yahoo company info missing): a cash-flow flag on them is a risk tag, not a hard override, and financial-health (F6) uses industrial rules, which do not suit lenders. Give sector_type (bank, nbfc ...) in your holdings file or re-run when Yahoo answers.")
     def flows_for(g, s):
         fl = []; divs = H[s]["div"][H[s]["div"] > 0]
         for _, r in g.iterrows():
@@ -532,6 +536,7 @@ def stage_analysis(ctx):
     if not (port_x and not pd.isna(port_x.get("XIRR", np.nan))): reasons.append("no dated transactions, so your XIRR and actual performance cannot be calculated (return figures are a back-cast at today's weights)")
     f5_ = [e for e in evid_rows if str(e.get("Factor", "")).startswith("F5")]
     if f5_ and sum(1 for e in f5_ if e.get("Basis") == "absolute fallback") / len(f5_) > 0.5: reasons.append("valuation uses absolute P/E or P/B bands (no peer set)")
+    for r_ in getattr(provider, "info_reasons", lambda: [])(): reasons.append(r_)
     status_line = ("STATUS: PROVISIONAL - " + "; ".join(reasons) + ".") if reasons else "STATUS: data checks passed."
 
     summary = [
@@ -564,6 +569,7 @@ def stage_analysis(ctx):
     PERF = pd.DataFrame(perf).T.reset_index().rename(columns={"index": "Symbol"}) if perf else pd.DataFrame()
     TRIG = pd.DataFrame(trig_rows); EVD = pd.DataFrame(evid_rows)
     CA = pd.DataFrame(ca_rows, columns=["Symbol", "Date", "Event", "Note"])
+    notes_global.extend(getattr(provider, "info_notes", lambda: [])())
     GAPS = pd.DataFrame(gaps + [("portfolio", "note", n) for n in notes_global], columns=["Item", "Missing/Issue", "Impact"])
     PORT = pd.DataFrame([(k, v) for k, v in port.items()], columns=["Metric", "Value"])
     METHOD = pd.DataFrame([(k, str(v)) for k, v in CFG.items()], columns=["Parameter", "Value"])

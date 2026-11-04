@@ -199,7 +199,7 @@
   "fundamentals": {
    "module": "fundamentals",
    "sha": "16ed1b04ca5d894ef8126ee48e96408b4af5156545f4e934ac168913cc091c92",
-   "verbatim": true
+   "verbatim": false
   },
   "val_metric": {
    "module": "fundamentals",
