@@ -182,6 +182,30 @@ def main():
         check("a saved copy that knows the sector rescues it: treated as a financial, so no cash-flow flag at all",
               sc_fin.loc["FFF", "SectorType"] == "financial" and "Earnings-quality" not in str(sc_fin.loc["FFF", "Review_Risk"]), str(sc_fin.loc["FFF", ["SectorType", "Review_Risk"]].tolist()))
 
+        class Recorder(mw.MockProvider):
+            def __init__(self, *a, **k):
+                super().__init__(*a, **k); self.log = []
+            def info(self, tkr): self.log.append(("info", tkr)); return super().info(tkr)
+            def history(self, tkr, a, b): self.log.append(("history", tkr)); return super().history(tkr, a, b)
+        rec = Recorder()
+        ctxp = new_ctx = None
+        from pdiag.pipeline import new_context, stage_evidence, stage_prices
+        ctxp = new_context(lots_no_sector(), ResilientProvider(rec, pace=0), MemoryState(auto_csv=(tmp / "out" / "evidence_auto.csv").read_bytes()),
+                           peers={"GGG": ["AAA", "HHH"]}, options=RunOptions(fetch_evidence=False))
+        n_t = ac.prefetch_info(ctxp)
+        with contextlib.redirect_stdout(io.StringIO()):
+            stage_evidence(ctxp); stage_prices(ctxp); apply_cost_review(ctxp, ac.FormHooks()); stage_analysis(ctxp)
+        kinds = [k for k, _ in rec.log]
+        check("company info is asked for FIRST (before the first price request), once per ticker and never again later in the run",
+              kinds.index("history") > max(i for i, k in enumerate(kinds) if k == "info") and kinds.count("info") == n_t and n_t >= 14, f"{n_t} tickers; info calls {kinds.count('info')}")
+        rb2 = ResilientProvider(Blind(), pace=0)
+        for i in range(3): rb2.info(f"Q{i}.NS")
+        check("when Yahoo is refusing, the note says whether the very first request was already refused", "very first company-info request" in " ".join(rb2.info_notes()) and "already refused" in " ".join(rb2.info_notes()))
+        flaky = type("F", (mw.MockProvider,), {"info": lambda self, t: (mw.MockProvider().info(t) if t == "Z0.NS" else {})})()
+        rf = ResilientProvider(flaky, pace=0)
+        for i in range(3): rf.info(f"Z{i}.NS")
+        check("...and when the first request worked but later ones were refused, it says that instead", "worked, so Yahoo started refusing later" in " ".join(rf.info_notes()))
+
         print("\n[C] the page, driven with Streamlit's test runner")
         from streamlit.testing.v1 import AppTest
         pack0 = ac.build_pack(MemoryState(auto_csv=(tmp / "out" / "evidence_auto.csv").read_bytes()), ac.empty_pack()["buy_dates"], ac.empty_pack()["cost_decisions"])

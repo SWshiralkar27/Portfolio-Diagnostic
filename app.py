@@ -103,6 +103,7 @@ if S.stage == "upload":
                               options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True),
                               verified=read_table(vf) if vf is not None else None)
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
+            ac.prefetch_info(ctx)                               # company info first, before any other Yahoo request
             stage_evidence(ctx)
         except Exception as e:
             wipe(); fail("Reading your files", e)

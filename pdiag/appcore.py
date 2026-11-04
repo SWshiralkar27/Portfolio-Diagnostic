@@ -45,6 +45,26 @@ def progress_to(bar):
     return cb
 
 
+def prefetch_info(ctx):
+    """Ask Yahoo for company info FIRST, before any other Yahoo call (prices, results dates). The provider keeps the answers,
+    so the later stages use them without asking again. If Yahoo refuses, the very first request tells us whether it was refused
+    from the start or only after this run's other requests."""
+    from pdiag.utils import to_ticker
+    eq = ctx.lots[~ctx.lots.asset_type.isin(["cash", "bond"])]
+    tickers, seen = [], set()
+    for s, yt in zip(eq.symbol, eq.yahoo_ticker):
+        t = to_ticker(yt if has(yt) else s)
+        if t not in seen: seen.add(t); tickers.append(t)
+    for plist in ctx.peers.values():
+        for p in plist:
+            t = to_ticker(p)
+            if t not in seen: seen.add(t); tickers.append(t)
+    for i, t in enumerate(tickers, 1):
+        ctx.progress("company info", i, len(tickers), t)
+        ctx.provider.info(t)
+    return len(tickers)
+
+
 # ---------------- carry-over pack ----------------
 def empty_pack():
     return dict(auto_csv=None, snapshot_csv=None, buy_dates=pd.DataFrame(columns=BUY_COLS), cost_decisions=pd.DataFrame(columns=DEC_COLS), company_info={}, info={})
