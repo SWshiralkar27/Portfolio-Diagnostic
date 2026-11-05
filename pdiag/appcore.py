@@ -92,10 +92,10 @@ def read_peers(f, held=None):
     an own ticker written 'XYZ? (verify)' is kept only if XYZ is exactly a symbol in your holdings. Nothing is guessed."""
     df = read_table(f)
     cols = list(df.columns)
-    if {"symbol", "peer"} <= set(cols):
+    if {"symbol", "peer"} <= set(cols) and not any(re.fullmatch(r"peer[_.]?\d+", c) for c in cols):
         return peers_from_df(df), dict(layout="long", pairs=int(len(df)), left_out=[], used=[], kept=[])
     tcol = next((c for c in TICKER_COLS if c in cols), None)
-    pcols = [c for c in cols if re.fullmatch(r"peer_?\d+", c)]
+    pcols = [c for c in cols if re.fullmatch(r"peer([_.]?\d+)?", c)]        # peer, peer.1, peer.2 ... (repeated headers) or Peer 1, Peer 2 ...
     if tcol is None or not pcols:
         raise FatalInputError("The peers file needs either two columns named symbol and peer (one row per peer), or a ticker column "
                               f"(NSE Ticker) followed by Peer 1, Peer 2 ... columns. Yours has: {_cols(df)}.")
@@ -119,17 +119,21 @@ def read_peers(f, held=None):
                 else: left_out.append((t, pc, p)); continue
             if q != t: pairs.append((t, q))
     pairs = list(dict.fromkeys(pairs))
+    dup_rows = int(df[tcol].astype(str).str.strip().str.upper().duplicated().sum())
     peers = {}
     for t, q in pairs: peers.setdefault(t, []).append(q)
-    return peers, dict(layout="wide", pairs=len(pairs), left_out=left_out, used=used, kept=kept)
+    return peers, dict(layout="wide", pairs=len(pairs), left_out=left_out, used=used, kept=kept, dup_rows=dup_rows)
 
 
 def peers_note(rep):
     if rep.get("layout") != "wide": return ""
     ex = "; ".join(f"{a} {b}: {c}" for a, b, c in rep["left_out"][:4])
-    return (f"Peers file read in the one-row-per-company layout: {rep['pairs']} peer pairs. {len(rep['left_out'])} entries were left out because the file marks them uncertain"
-            f" ({ex}{' ...' if len(rep['left_out']) > 4 else ''}); {len(rep['used'])} used the file's own correction; {len(rep['kept'])} own tickers marked '? (verify)' were matched to your holdings. "
-            "Stocks with fewer than 5 peers are low-confidence peer comparisons.")
+    return (f"Peers file read in the one-row-per-company layout: {rep['pairs']} peer pairs. "
+            + (f"{rep['dup_rows']} companies appeared on more than one row (their peers were combined). " if rep.get("dup_rows") else "")
+            + (f"{len(rep['left_out'])} entries were left out because the file marks them uncertain ({ex}{' ...' if len(rep['left_out']) > 4 else ''}); " if rep["left_out"] else "")
+            + (f"{len(rep['used'])} used the file's own correction; " if rep["used"] else "")
+            + (f"{len(rep['kept'])} own tickers marked '? (verify)' were matched to your holdings. " if rep["kept"] else "")
+            + "Stocks with fewer than 5 peers are low-confidence peer comparisons.")
 
 
 # ---------------- Step 3 safety: preview of a cost correction, and re-running the step safely ----------------

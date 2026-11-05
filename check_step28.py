@@ -22,7 +22,7 @@ def check(name, ok, detail=""):
 
 
 def staged(mw, tmp, lots=None, provider=None, options=None, manual=None, pack=None):
-    from pdiag.loaders import load_holdings
+    from pdiag.loaders import load_holdings, read_table
     from pdiag.pipeline import new_context, stage_evidence, stage_prices
     from pdiag.state import MemoryState
     from pdiag import appcore as ac
@@ -47,7 +47,7 @@ def main():
     import mock_world as mw
     from pdiag import appcore as ac
     from pdiag.config import CFG
-    from pdiag.loaders import load_holdings
+    from pdiag.loaders import load_holdings, read_table
     from pdiag.pipeline import RunOptions, apply_cost_review, stage_analysis
     from pdiag.providers import NSEProvider
     from pdiag.state import MemoryState
@@ -233,6 +233,14 @@ def main():
         e2 = err(ac.read_evidence, named_file("e.csv", b"stock,pledge\nAAA,5\n"))
         check("a peers file with unknown columns gives a plain message that names the columns it found", e1.startswith("FatalInputError") and "foo" in e1 and "symbol and peer" in e1, e1)
         check("an evidence file without a symbol column gives a plain message, not KeyError", e2.startswith("FatalInputError") and "symbol" in e2 and "KeyError" not in e2, e2)
+        wide2 = (b"symbol,peer,peer,peer,peer\nASIANPAINT,NEROLAC,,,\nAAA,BBB,CCC,DDD,\nASIANPAINT,BERGEPAINT,KANSAINER,AKZOINDIA,\nBBB,AAA,,,\n")
+        p2, r2 = ac.read_peers(named_file("Peers_1.csv", wide2))
+        check("repeated 'peer' headers (side-by-side layout) are read as a wide layout: all peers used, a company on two rows is combined",
+              r2["layout"] == "wide" and p2["AAA"] == ["BBB", "CCC", "DDD"] and p2["ASIANPAINT"] == ["NEROLAC", "BERGEPAINT", "KANSAINER", "AKZOINDIA"] and r2["dup_rows"] == 1, str((p2, r2["layout"])))
+        check("the note mentions the combined rows", "more than one row" in ac.peers_note(r2))
+        e3 = err(read_table, named_file("h.csv", b"symbol,Buy Date,buy_date,quantity\nAAA,2023-01-01,2023-02-02,5\n"))
+        check("two columns that read the same (Buy Date and buy_date) give a plain message naming both, not 'cannot assemble with duplicate keys'",
+              e3.startswith("FatalInputError") and "'Buy Date'" in e3 and "'buy_date'" in e3 and "assemble" not in e3, e3)
         ctx_e = staged(mw, tmp)
         ed = ac.cost_candidates(ctx_e.HD, CFG).assign(factor=[90.0] * 1) if len(ac.cost_candidates(ctx_e.HD, CFG)) == 1 else ac.cost_candidates(ctx_e.HD, CFG)
         bad = ac.cost_preview(ctx_e.HD, ed.assign(factor=1000.0), CFG)
@@ -298,6 +306,13 @@ def main():
               b3 == (True, "done") and xb["Scorecard_A"].CapTier.notna().sum() >= 10 and (xb["Evidence"].Factor.str.startswith("F5").sum() > 0)
               and any("carry-over pack" in n for n in ob["notes"]) and "carry-over pack" in ob["status"], str((b3, ob.get("notes"), ob.get("status"))))
         h_nosec = pd.read_csv(tmp / "holdings.csv").assign(sector_type="", sector="").to_csv(index=False).encode()      # a file like yours: no sector columns filled
+        bad_hold = b"symbol,Buy Date,buy_date,quantity,buy_price\nAAA,2023-01-01,2023-02-02,5,100\n"
+        atd = AppTest.from_file(str(HERE / "app.py"), default_timeout=180)
+        atd.session_state["_provider_factory"] = mw.MockProvider; atd.session_state["_pace"] = 0; atd.session_state["_test_files"] = dict(files, holdings=bad_hold)
+        atd.run(); atd.checkbox(key="opt_fetch").uncheck().run(); atd.button(key="start").click().run()
+        msgs = [str(e.value) for e in atd.error]
+        check("on the page, a holdings file with look-alike columns stops with a message that names the Holdings file and both columns",
+              atd.session_state["stage"] == "upload" and any(m.startswith("Holdings file:") and "'Buy Date'" in m for m in msgs), str(msgs))
         atc, fc, c1_, c2_, c3_ = drive(pack0, factory=Blind, hold=h_nosec)
         oc = atc.session_state["out"] if c3_ == (True, "done") else {}
         check("Yahoo refuses and there is no saved copy: the run still finishes, and STATUS and Data_Gaps say plainly that company info is missing",

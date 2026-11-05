@@ -18,7 +18,14 @@ def read_table(path) -> pd.DataFrame:
         except Exception:
             if hasattr(path, "seek"): path.seek(0)
             df = pd.read_csv(path, skipinitialspace=True)
+    orig = [str(c) for c in df.columns]
     df.columns = [str(c).replace("\ufeff", "").strip().lower().replace(" ", "_") for c in df.columns]
+    names = list(df.columns)
+    dup = sorted({c for c in names if names.count(c) > 1})
+    if dup:
+        shown = ", ".join(f"'{o}'" for o, n in zip(orig, names) if n in dup)
+        raise FatalInputError(f"Your file has more than one column that reads as the same name: {shown}. Capital letters, spaces and underscores are ignored, "
+                              "so 'Buy Date' and 'buy_date' count as the same column. Delete or rename one of them and upload again.")
     return df
 
 

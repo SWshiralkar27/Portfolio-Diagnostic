@@ -59,6 +59,13 @@ def wipe():
     for k in ("ctx", "pack", "n_saved", "out", "shown_cost", "snap_b"): S.pop(k, None)
 
 
+def read_as(label, fn, *a):
+    """Run one file read; any problem is reported with the name of the file it came from."""
+    try: return fn(*a)
+    except FatalInputError as e: raise FatalInputError(f"{label}: {e}")
+    except Exception as e: raise FatalInputError(f"{label} could not be read ({type(e).__name__}: {e}).")
+
+
 def fail(where, e):
     st.error(str(e) if isinstance(e, FatalInputError) else f"{where} failed: {type(e).__name__}: {e}")
     st.stop()
@@ -92,17 +99,17 @@ if S.stage == "upload":
         if hold is None:
             st.error("Please upload your holdings file first."); st.stop()
         try:
-            lots = holdings_from_df(read_table(hold))
+            lots = read_as("Holdings file", lambda: holdings_from_df(read_table(hold)))
             pk = pick("pack", f_pack, "pack.zip")
-            pack = ac.parse_pack(pk) if pk is not None else ac.empty_pack()
+            pack = read_as("Carry-over pack", ac.parse_pack, pk) if pk is not None else ac.empty_pack()
             lots, n_saved = ac.apply_saved_buy_dates(lots, pack["buy_dates"])
             ev, pf, vf = pick("evidence", f_ev, "evidence.csv"), pick("peers", f_peers, "peers.csv"), pick("verified", f_ver, "verified_flags.csv")
-            peers, prep = ac.read_peers(pf, held=set(lots.symbol)) if pf is not None else ({}, {})
+            peers, prep = read_as("Peers file", ac.read_peers, pf, set(lots.symbol)) if pf is not None else ({}, {})
             ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
-                              manual_evid=ac.read_evidence(ev) if ev is not None else {},
+                              manual_evid=read_as("Evidence file", ac.read_evidence, ev) if ev is not None else {},
                               peers=peers,
                               options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True),
-                              verified=read_table(vf) if vf is not None else None)
+                              verified=read_as("Verified-flags file", read_table, vf) if vf is not None else None)
             if prep and ac.peers_note(prep): ctx.notes_global.append(ac.peers_note(prep))
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
             ac.prefetch_info(ctx)                               # company info first, before any other Yahoo request
