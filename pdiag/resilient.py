@@ -32,6 +32,7 @@ class ResilientProvider:
         self.status, self.errors, self.ages = {}, Counter(), []
         self._run, self._streak, self._tripped, self._diagnosed = {}, 0, False, 0
         self._first = None        # did the very first company-info request of the run work?
+        self._had_fail, self._ok_after_fail = False, False
 
     def __getattr__(self, name):                 # history, statements, surveillance, corporate_actions, nse, name ...
         if name == "inner": raise AttributeError(name)
@@ -62,8 +63,11 @@ class ResilientProvider:
             except Exception as e: got = {}; self.errors[f"{type(e).__name__}: {str(e)[:90]}"] += 1
             fresh = any(_ok(got.get(k)) for k in KEY_FIELDS)
             if self._first is None: self._first = fresh
-            if fresh: self._streak = 0
+            if fresh:
+                self._streak = 0
+                if self._had_fail: self._ok_after_fail = True
             else:
+                self._had_fail = True
                 self._streak += 1; self._diagnose(tkr, got)
                 if self._streak >= self.breaker: self._tripped = True
         if fresh:
@@ -89,14 +93,18 @@ class ResilientProvider:
         n, total, notes = Counter(self.status.values()), len(self.status), []
         why = "; ".join(f"{k} (x{v})" for k, v in self.errors.most_common(3))
         if n["missing"]:
+            names = sorted(k for k, v in self.status.items() if v == "missing")
             notes.append(f"Company info (sector, cap tier, valuation inputs) was NOT returned by Yahoo for {n['missing']} of {total} lookups and no saved copy exists: "
-                         f"those stocks have a blank sector and cap tier and an unscored valuation (F5)." + (f" Yahoo's answer: {why}." if why else ""))
+                         f"those stocks have a blank sector and cap tier and an unscored valuation (F5)." + (f" Yahoo's answer: {why}." if why else "")
+                         + f" Tickers: {', '.join(names[:15])}" + (" ..." if len(names) > 15 else "") + ".")
         saved = n["saved"] + n["saved-sector-only"]
         if saved:
             notes.append(f"Company info for {saved} lookups was not returned today and comes from your carry-over pack instead (age {min(self.ages)}-{max(self.ages)} days)"
                          + (f"; {n['saved-sector-only']} of them are older than {STALE_DAYS} days, so only the sector was reused" if n["saved-sector-only"] else "")
                          + ". Valuation and market cap are as of that earlier date." + (f" Yahoo's answer today: {why}." if why else ""))
-        if self._first is not None and (n["missing"] or saved):
+        if (n["missing"] or saved) and self._ok_after_fail and not self._tripped:
+            notes.append("Yahoo kept answering other tickers after these, so this looks like individual tickers it does not recognise (renamed, unlisted or mistyped symbols), not a refusal.")
+        elif self._first is not None and (n["missing"] or saved):
             notes.append("The very first company-info request of this run, made before any other Yahoo call, " + ("worked, so Yahoo started refusing later in the run." if self._first else "was already refused, so the refusal is not caused by this run's other requests."))
         if self._tripped:
             notes.append(f"Yahoo kept refusing company info, so after {self.breaker} failures in a row the app stopped asking for the rest of this run.")

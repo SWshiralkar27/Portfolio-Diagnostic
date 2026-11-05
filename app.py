@@ -16,7 +16,7 @@ try:
     from pdiag import appcore as ac
     from pdiag.config import CFG, VERSION
     from pdiag.errors import FatalInputError
-    from pdiag.loaders import read_table, holdings_from_df, evidence_from_df, peers_from_df
+    from pdiag.loaders import read_table, holdings_from_df
     from pdiag.pipeline import RunOptions, new_context, stage_evidence, stage_prices, apply_cost_review, stage_analysis
     from pdiag.providers import CompositeProvider
     from pdiag.resilient import ResilientProvider
@@ -56,7 +56,7 @@ def make_provider(stored):
 def wipe():
     t = S.pop("_tmp", None)
     if t: shutil.rmtree(t, ignore_errors=True)
-    for k in ("ctx", "pack", "n_saved", "out", "shown_cost"): S.pop(k, None)
+    for k in ("ctx", "pack", "n_saved", "out", "shown_cost", "snap_b"): S.pop(k, None)
 
 
 def fail(where, e):
@@ -97,11 +97,13 @@ if S.stage == "upload":
             pack = ac.parse_pack(pk) if pk is not None else ac.empty_pack()
             lots, n_saved = ac.apply_saved_buy_dates(lots, pack["buy_dates"])
             ev, pf, vf = pick("evidence", f_ev, "evidence.csv"), pick("peers", f_peers, "peers.csv"), pick("verified", f_ver, "verified_flags.csv")
+            peers, prep = ac.read_peers(pf, held=set(lots.symbol)) if pf is not None else ({}, {})
             ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
-                              manual_evid=evidence_from_df(read_table(ev)) if ev is not None else {},
-                              peers=peers_from_df(read_table(pf)) if pf is not None else {},
+                              manual_evid=ac.read_evidence(ev) if ev is not None else {},
+                              peers=peers,
                               options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True),
                               verified=read_table(vf) if vf is not None else None)
+            if prep and ac.peers_note(prep): ctx.notes_global.append(ac.peers_note(prep))
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
             ac.prefetch_info(ctx)                               # company info first, before any other Yahoo request
             stage_evidence(ctx)
@@ -145,6 +147,7 @@ elif S.stage == "form_a":
 
 elif S.stage == "form_b":
     ctx = S.ctx
+    if "snap_b" not in S: S.snap_b = ac.snapshot_ctx(ctx)
     st.subheader("Step 3 of 3 - check the cost of unusual lines (optional)")
     cand = ac.cost_candidates(ctx.HD, CFG, S.pack["cost_decisions"])
     ed_cost = cand
@@ -155,13 +158,21 @@ elif S.stage == "form_b":
         ed_cost = st.data_editor(cand, key="ed_cost", hide_index=True, disabled=["symbol", "avg_cost", "price", "pnl_pct", "flag"],
                                  column_config={"avg_cost": st.column_config.NumberColumn("Avg cost", format="%.2f"), "price": st.column_config.NumberColumn("Price", format="%.2f"),
                                                 "pnl_pct": st.column_config.NumberColumn("P&L %", format="%.0f"),
-                                                "confirm": st.column_config.CheckboxColumn("Cost is correct"), "factor": st.column_config.NumberColumn("Correction factor", min_value=0.0)})
+                                                "confirm": st.column_config.CheckboxColumn("Cost is correct"), "factor": st.column_config.NumberColumn("Correction factor", min_value=0.0, max_value=20.0)})
+        prev = ac.cost_preview(ctx.HD, ed_cost, CFG)
+        if len(prev):
+            st.markdown("**What your correction would do** (check it before you run):")
+            st.dataframe(prev, hide_index=True, column_config={"avg_cost_now": st.column_config.NumberColumn("Avg cost now", format="%.2f"), "avg_cost_after": st.column_config.NumberColumn("Avg cost after", format="%.2f"),
+                                                                  "price": st.column_config.NumberColumn("Price", format="%.2f"), "pnl_pct_after": st.column_config.NumberColumn("P&L % after", format="%.0f")})
+            if (prev.note != "ok").any(): st.warning("At least one correction still leaves an odd cost. New cost = old cost x factor, so a total entered as a price needs a factor below 1 (for example 0.001), not above 1.")
+        st.caption("Press Enter or click outside the table cell before you press Run, and press Run only once.")
     else:
         st.success("No lines with an unusual cost.")
     if st.button("Run the analysis", type="primary", key="run_b"):
         try:
             confirmed, factors, decisions = ac.decisions_from_edits(ed_cost)
             bar = st.progress(0.0, text="Analysing"); ctx.progress = ac.progress_to(bar)
+            ac.restore_ctx(ctx, S.snap_b)                  # safe if Run is pressed twice
             apply_cost_review(ctx, ac.FormHooks(confirmed, factors))
             res = stage_analysis(ctx)
             out = ac.package_outputs(res, ctx.state, S.pack, decisions, shown_cost_symbols=list(cand.symbol),

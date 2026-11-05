@@ -36,6 +36,11 @@ def staged(mw, tmp, lots=None, provider=None, options=None, manual=None, pack=No
     return ctx
 
 
+def named_file(name, data):
+    f = io.BytesIO(data); f.name = name
+    return f
+
+
 def main():
     import numpy as np
     import pandas as pd
@@ -205,6 +210,45 @@ def main():
         rf = ResilientProvider(flaky, pace=0)
         for i in range(3): rf.info(f"Z{i}.NS")
         check("...and when the first request worked but later ones were refused, it says that instead", "worked, so Yahoo started refusing later" in " ".join(rf.info_notes()))
+
+        print("\n[E] Step 28d - plain file errors, the wide peers layout, cost preview, safe re-run")
+        wide = ("Company,NSE Ticker,Peer 1,Peer 2,Peer 3,Peer 4,Peer 5,Basis\n"
+                "Alpha Ltd,AAA,BBB,CCC,PIDILITIND?,HERO Motocorp? Use HEROMOTOCO,DDD,ok\n"
+                "Beta Ltd,BETA? (verify),AAA,CCC,,,,x\n"
+                "Gamma Ltd,GAMMA? (verify),AAA,,,,,x\n"
+                "Delta Ltd,VERIFY,AAA,,,,,x\n")
+        pw, rep = ac.read_peers(named_file("peers.csv", wide.encode()), held={"AAA", "BETA"})
+        check("wide peers layout is read: plain peers kept, a doubtful peer left out, the file's own correction used",
+              pw.get("AAA") == ["BBB", "CCC", "HEROMOTOCO", "DDD"] and rep["layout"] == "wide" and any(x[2] == "PIDILITIND?" for x in rep["left_out"]) and rep["used"][0][2] == "HEROMOTOCO", str(pw))
+        check("an own ticker 'BETA? (verify)' is kept only because BETA is exactly a symbol in the holdings; GAMMA is not guessed",
+              "BETA" in pw and "GAMMA" not in pw and rep["kept"] == ["BETA"], str(pw))
+        check("a placeholder such as VERIFY is never treated as a company", "VERIFY" not in pw)
+        check("the Data_Gaps note describes what was left out", "left out" in ac.peers_note(rep) and "PIDILITIND?" in ac.peers_note(rep))
+        pl, rl = ac.read_peers(named_file("p.csv", b"symbol,peer\nAAA,BBB\nAAA,CCC\n"))
+        check("the one-row-per-peer layout still works exactly as before", pl == {"AAA": ["BBB", "CCC"]} and rl["layout"] == "long")
+        def err(fn, *a):
+            try: fn(*a); return ""
+            except Exception as e: return f"{type(e).__name__}: {e}"
+        e1 = err(ac.read_peers, named_file("p.csv", b"foo,bar\n1,2\n"))
+        e2 = err(ac.read_evidence, named_file("e.csv", b"stock,pledge\nAAA,5\n"))
+        check("a peers file with unknown columns gives a plain message that names the columns it found", e1.startswith("FatalInputError") and "foo" in e1 and "symbol and peer" in e1, e1)
+        check("an evidence file without a symbol column gives a plain message, not KeyError", e2.startswith("FatalInputError") and "symbol" in e2 and "KeyError" not in e2, e2)
+        ctx_e = staged(mw, tmp)
+        ed = ac.cost_candidates(ctx_e.HD, CFG).assign(factor=[90.0] * 1) if len(ac.cost_candidates(ctx_e.HD, CFG)) == 1 else ac.cost_candidates(ctx_e.HD, CFG)
+        bad = ac.cost_preview(ctx_e.HD, ed.assign(factor=1000.0), CFG)
+        good = ac.cost_preview(ctx_e.HD, ed.assign(factor=50.0), CFG)
+        check("cost preview: a factor that leaves an odd cost (2.00 x 1000 against a price near 90) is marked, a sensible one (x 50) is ok",
+              len(bad) == 1 and bad.note.iloc[0] != "ok" and good.note.iloc[0] == "ok" and abs(good.avg_cost_after.iloc[0] - ctx_e.HD.loc["EEE", "AvgCost"] * 50) < 1e-6, str(bad))
+        c1, c2 = staged(mw, tmp), staged(mw, tmp)
+        snap = ac.snapshot_ctx(c2)
+        apply_cost_review(c1, ac.FormHooks()); apply_cost_review(c1, ac.FormHooks((), {"EEE": 50.0}))          # the bug: Run pressed twice
+        apply_cost_review(c2, ac.FormHooks()); ac.restore_ctx(c2, snap); apply_cost_review(c2, ac.FormHooks((), {"EEE": 50.0}))   # the fix
+        n_gap = lambda c: sum(1 for g in c.gaps if g[0] == "EEE" and g[1] == "cost basis")
+        check("pressing Run twice no longer leaves a stale cost note (or compounds a correction); the restored run has none", n_gap(c1) == 1 and n_gap(c2) == 0 and abs(c2.lots.loc[c2.lots.symbol == "EEE", "buy_price"].iloc[0] / staged(mw, tmp).lots.loc[lambda d: d.symbol == "EEE", "buy_price"].iloc[0] - 50) < 1e-9, f"{n_gap(c1)} vs {n_gap(c2)}")
+        iso = ResilientProvider(type("I", (mw.MockProvider,), {"info": lambda self, t: ({} if t == "NOPE.NS" else mw.MockProvider().info(t))})(), pace=0)
+        for t in ("AAA.NS", "NOPE.NS", "BBB.NS", "CCC.NS"): iso.info(t)
+        ni = " ".join(iso.info_notes())
+        check("one unknown ticker among good ones: the note names it and says it is not a refusal (no 'Yahoo started refusing')", "NOPE.NS" in ni and "not a refusal" in ni and "started refusing" not in ni, ni)
 
         print("\n[C] the page, driven with Streamlit's test runner")
         from streamlit.testing.v1 import AppTest
