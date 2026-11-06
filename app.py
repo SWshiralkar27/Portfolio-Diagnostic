@@ -108,7 +108,7 @@ if S.stage == "upload":
             ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
                               manual_evid=read_as("Evidence file", ac.read_evidence, ev) if ev is not None else {},
                               peers=peers,
-                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True),
+                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True),
                               verified=read_as("Verified-flags file", read_table, vf) if vf is not None else None)
             if prep and ac.peers_note(prep): ctx.notes_global.append(ac.peers_note(prep))
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
@@ -127,10 +127,12 @@ elif S.stage == "form_a":
     und = ac.undated_lots(ctx.lots)
     ed_dates = und
     if len(und):
-        st.markdown("**Buy dates.** With dates the app can compute your own XIRR and holding periods. Without them it says 'holding period unknown'; nothing is guessed.")
+        st.markdown("**Buy dates.** Type a date for the holding period (long-term or not). Tick **Date is exact** only if it is the real purchase date from your tradebook: "
+                    "your own XIRR is computed only from exact dates. An estimated date is used for the holding period only, and your broker's XIRR is shown instead. Nothing is guessed.")
         ed_dates = st.data_editor(und, key="ed_dates", hide_index=True, disabled=["lot", "symbol", "quantity", "buy_price"],
-                                  column_order=["symbol", "quantity", "buy_price", "buy_date"],
-                                  column_config={"buy_date": st.column_config.DateColumn("Buy date", format="YYYY-MM-DD")})
+                                  column_order=["symbol", "quantity", "buy_price", "buy_date", "exact"],
+                                  column_config={"buy_date": st.column_config.DateColumn("Buy date", format="YYYY-MM-DD"),
+                                                 "exact": st.column_config.CheckboxColumn("Date is exact")})
     prom = ac.missing_promoter(ctx.evid, ctx.lots)
     ed_prom = prom
     if len(prom):

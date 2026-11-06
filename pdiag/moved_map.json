@@ -234,7 +234,7 @@
   "build_evidence_register": {
    "module": "register",
    "sha": "53848f67dbc36ce243f8dc09667edd58c7d01bc6e12da54fecf7bf4e305bf1d1",
-   "verbatim": true
+   "verbatim": false
   },
   "BADGE_CLS": {
    "module": "report_html",

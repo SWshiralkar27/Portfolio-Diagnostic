@@ -37,6 +37,7 @@ class RunOptions:
     demo: bool = False
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
+    exact_dates_only: bool = False      # app mode: own XIRR only from lots whose buy date you marked exact; adds the broker-XIRR coverage line
     unknown_sector_guard: bool = False      # app mode: no sector from you or Yahoo -> SectorType 'unknown' and a cash-flow flag is a risk tag, not a hard override
 
 
@@ -272,7 +273,7 @@ def stage_analysis(ctx):
     def flows_for(g, s):
         fl = []; divs = H[s]["div"][H[s]["div"] > 0]
         for _, r in g.iterrows():
-            if pd.isna(r.buy_date): return None
+            if pd.isna(r.buy_date) or (options.exact_dates_only and pd.notna(r.get("date_exact", np.nan)) and not bool(r.get("date_exact"))): return None
             fl.append((r.buy_date, -r.quantity * r.buy_price))
             for d_, v_ in divs[divs.index >= r.buy_date].items(): fl.append((d_, r.quantity * v_))
         return fl
@@ -558,6 +559,9 @@ def stage_analysis(ctx):
     n_risk = int((SCD.Review_Risk != "").sum()) if len(SCD) else 0
     n_data = int((SCD.Review_DataGap != "").sum()) if len(SCD) else 0
     summary.append(f"Flags: {n_hard} hard-override, {n_risk} risk-evidenced, {n_data} data-gap.")
+    if options.exact_dates_only and HD.UserXIRR.notna().any():
+        _bx = HD.UserXIRR.notna() & HD.Priced
+        summary.append(f"Broker-reported XIRR is available for {int(_bx.sum())} of {int(HD.Priced.sum())} priced holdings ({HD.Value[_bx].sum() / HD.Value.sum() * 100:.1f}% of value). XIRRs are never averaged, so no portfolio XIRR is built from them; your own XIRR is computed only from lots whose buy date you marked as exact.")
     summary.append(f"Evidence register: {len(REG)} flags, {n_unver} not independently verified (Evidence_Register sheet; add verified_flags.csv to record checks).")
     
     HOLD = HD.reset_index()[["Symbol", "Ticker", "AssetType", "Sector", "SectorType", "CapTier", "Qty", "AvgCost", "Invested", "CMP", "PriceAsOf", "Value", "PnL", "PnLPct", "Priced", "CostFlag", "Weight", "Target", "TargetDev_pp", "OutOfBand", "Surveillance", "UserXIRR"]]

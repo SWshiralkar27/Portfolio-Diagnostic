@@ -3,7 +3,7 @@
 Carry-over pack = one .zip the user downloads at the end of a run and uploads at the next:
   evidence_auto.csv     NSE evidence already fetched (so the next run only fetches stocks older than 7 days)
   last_run_snapshot.csv this run's scores (so the next run can show Score change)
-  buy_dates.csv         buy dates the user typed (symbol, quantity, buy_price, buy_date)
+  buy_dates.csv         buy dates the user typed (symbol, quantity, buy_price, buy_date, exact); exact = from a tradebook, not an estimate
   cost_decisions.csv    cost lines the user confirmed or corrected (symbol, decision, factor)
   company_info.json     last good Yahoo company info per stock (used, labelled with its age, when Yahoo does not answer)
   pack_info.json        tool version and date
@@ -32,7 +32,7 @@ HOLDINGS_TEMPLATE = (
     "EXAMPLE1,100,250.50,2022-05-10,14.2,5,equity,,,,,,,\n"
     "EXAMPLE1,40,310.00,2024-01-15,14.2,5,equity,,,,,,,\n"
     "CASH,1,50000,,,,cash,,,,,,,\n")
-BUY_COLS = ["symbol", "quantity", "buy_price", "buy_date"]
+BUY_COLS = ["symbol", "quantity", "buy_price", "buy_date", "exact"]
 DEC_COLS = ["symbol", "decision", "factor"]
 COST_COLS = ["symbol", "avg_cost", "price", "pnl_pct", "flag", "confirm", "factor"]
 
@@ -186,6 +186,7 @@ def parse_pack(src):
     names = set(zf.namelist())
     bd = _csv(zf, "buy_dates.csv", BUY_COLS)
     bd["buy_date"] = pd.to_datetime(bd["buy_date"], errors="coerce")
+    bd["exact"] = bd["exact"].map(lambda v: str(v).strip().lower() in ("true", "1", "yes"))      # older packs have no such column: dates count as estimates
     for c in ("quantity", "buy_price"): bd[c] = pd.to_numeric(bd[c], errors="coerce")
     bd["symbol"] = bd["symbol"].astype(str).str.strip().str.upper()
     dec = _csv(zf, "cost_decisions.csv", DEC_COLS)
@@ -230,12 +231,19 @@ def apply_saved_buy_dates(lots, buy_dates):
     saved = {}
     for r in buy_dates.itertuples():
         if pd.notna(r.buy_date) and pd.notna(r.quantity) and pd.notna(r.buy_price):
-            saved[(str(r.symbol).upper(), round(float(r.quantity), 4), round(float(r.buy_price), 2))] = pd.Timestamp(r.buy_date)
-    lots, n = lots.copy(), 0
+            saved[(str(r.symbol).upper(), round(float(r.quantity), 4), round(float(r.buy_price), 2))] = (pd.Timestamp(r.buy_date), bool(r.exact))
+    lots, n = _with_exact_column(lots.copy()), 0
     for i, k in zip(lots.index, lot_keys(lots)):
         if k in saved and pd.isna(lots.at[i, "buy_date"]):
-            lots.at[i, "buy_date"] = saved[k]; n += 1
+            lots.at[i, "buy_date"], lots.at[i, "date_exact"] = saved[k]; n += 1
     return lots, n
+
+
+def _with_exact_column(lots):
+    """date_exact: True = a date you marked exact, False = an estimate, empty = a date that came in your file (treated as exact)."""
+    if "date_exact" not in lots.columns:
+        lots["date_exact"] = pd.Series([np.nan] * len(lots), index=lots.index, dtype=object)
+    return lots
 
 
 def undated_lots(lots):
@@ -243,23 +251,24 @@ def undated_lots(lots):
     d = lots.loc[m, ["symbol", "quantity", "buy_price"]].copy()
     d.insert(0, "lot", d.index)
     d["buy_date"] = pd.Series(pd.NaT, index=d.index, dtype="datetime64[ns]")
+    d["exact"] = False
     return d.reset_index(drop=True)
 
 
 def apply_buy_date_edits(lots, edits):
-    lots, n = lots.copy(), 0
+    lots, n = _with_exact_column(lots.copy()), 0
     for r in edits.itertuples():
         if pd.notna(r.buy_date):
-            lots.at[int(r.lot), "buy_date"] = pd.Timestamp(r.buy_date); n += 1
+            lots.at[int(r.lot), "buy_date"] = pd.Timestamp(r.buy_date); lots.at[int(r.lot), "date_exact"] = bool(r.exact); n += 1
     return lots, n
 
 
 def merge_pack_dates(old, lots, edits):
-    rows = [dict(symbol=r.symbol, quantity=r.quantity, buy_price=r.buy_price, buy_date=r.buy_date) for r in old.itertuples()] if len(old) else []
+    rows = [dict(symbol=r.symbol, quantity=r.quantity, buy_price=r.buy_price, buy_date=r.buy_date, exact=bool(r.exact)) for r in old.itertuples()] if len(old) else []
     for r in edits.itertuples():
         if pd.notna(r.buy_date) and pd.notna(lots.at[int(r.lot), "buy_price"]):
             l = lots.loc[int(r.lot)]
-            rows.append(dict(symbol=str(l.symbol).upper(), quantity=float(l.quantity), buy_price=round(float(l.buy_price), 2), buy_date=pd.Timestamp(r.buy_date)))
+            rows.append(dict(symbol=str(l.symbol).upper(), quantity=float(l.quantity), buy_price=round(float(l.buy_price), 2), buy_date=pd.Timestamp(r.buy_date), exact=bool(r.exact)))
     df = pd.DataFrame(rows, columns=BUY_COLS)
     return df.drop_duplicates(subset=["symbol", "quantity", "buy_price"], keep="last").reset_index(drop=True)
 
@@ -276,7 +285,7 @@ def apply_promoter_edits(evid, edits):
     evid = {k: dict(v) for k, v in evid.items()}
     for r in edits.itertuples():
         if pd.notna(r.promoter_holding_now) and pd.notna(r.promoter_holding_1y):
-            evid.setdefault(r.symbol, {"symbol": r.symbol}).update(promoter_holding_now=float(r.promoter_holding_now), promoter_holding_1y=float(r.promoter_holding_1y))
+            evid.setdefault(r.symbol, {"symbol": r.symbol}).update(promoter_holding_now=float(r.promoter_holding_now), promoter_holding_1y=float(r.promoter_holding_1y), promoter_holding_source="typed")
     return evid
 
 

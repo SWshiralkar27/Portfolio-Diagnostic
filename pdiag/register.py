@@ -66,7 +66,7 @@ def build_evidence_register(HD, SCD, fundd, auto_evid, evid, total_value, verifi
             soft = " (softened one notch: majority control intact)" if pn >= 51.0 else ""
             sc_ = f2.get(s, np.nan)
             add(s, "Promoter holding", "NSE shareholding pattern", f"{p1:.2f}% -> {pn:.2f}% ({chg:+.2f}pp)",
-                "Fall of 1pp or more over about one year (a fall can also be dilution)", "NSE shareholding pattern via dalal", "",
+                "Fall of 1pp or more over about one year (a fall can also be dilution)", ("NSE shareholding pattern via dalal" if rec.get("promoter_holding_source") != "typed" else "Typed by you in the app (not fetched from NSE; not independently verified)"), "",
                 rec.get("promoter_holding_asof", ""), str(rec.get("fetched_at", ""))[:10],
                 (f"F2 scored {sc_:g}" if pd.notna(sc_) else "F2 scored") + soft)
 

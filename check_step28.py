@@ -212,6 +212,42 @@ def main():
         check("...and when the first request worked but later ones were refused, it says that instead", "worked, so Yahoo started refusing later" in " ".join(rf.info_notes()))
 
         print("\n[E] Step 28d - plain file errors, the wide peers layout, cost preview, safe re-run")
+        print("\n[F] Step 28f - estimated buy dates, broker-XIRR coverage, typed promoter label")
+        lots_f = load_holdings(tmp / "holdings.csv")
+        und_f = ac.undated_lots(lots_f)
+        check("the buy-date form has an 'exact' column that starts unticked", "exact" in und_f.columns and not und_f.exact.any())
+        edits_f = und_f.copy(); edits_f["buy_date"] = pd.Timestamp("2015-06-01")
+        lots_est, _ = ac.apply_buy_date_edits(lots_f, edits_f)
+        bd_f = ac.merge_pack_dates(ac.empty_pack()["buy_dates"], lots_f, edits_f)
+        check("estimated dates are remembered in the pack as estimates (exact = False) and come back as estimates",
+              not bd_f.exact.any() and not ac.parse_pack(ac.build_pack(MemoryState(auto_csv=b"symbol\nAAA\n"), bd_f, ac.empty_pack()["cost_decisions"]))["buy_dates"].exact.any())
+        old_pack = ac.parse_pack(ac.build_pack(MemoryState(auto_csv=b"symbol\nAAA\n"), bd_f.drop(columns="exact").assign(exact=float("nan")), ac.empty_pack()["cost_decisions"]))
+        check("a pack from before this update (no exact column) loads with every date counted as an estimate", not old_pack["buy_dates"].exact.any())
+        def run_x(lots, exact_only):
+            c = staged(mw, tmp, lots=lots, options=RunOptions(fetch_evidence=False, exact_dates_only=exact_only))
+            apply_cost_review(c, ac.FormHooks()); return stage_analysis(c)
+        r_all = run_x(lots_est, False); r_est = run_x(lots_est, True)
+        px_all = r_all.sheets["Performance_Risk"].set_index("Symbol")["XIRR"].notna().sum(); px_est = r_est.sheets["Performance_Risk"].set_index("Symbol")["XIRR"].notna().sum()
+        check("default (flag off): estimated dates still feed the old XIRR exactly as before", px_all > 5 and not r_all.port_x == {}, f"{px_all}")
+        exact_rows = lots_est.copy(); exact_rows["date_exact"] = exact_rows["date_exact"].where(exact_rows["symbol"] != "AAA", other=np.nan)       # AAA's file dates stay exact
+        r_mix = run_x(exact_rows, True)
+        xs = r_mix.sheets["Performance_Risk"].set_index("Symbol")["XIRR"]
+        check("exact-dates-only: lots with estimated dates are left out of every XIRR, lots with file dates stay in",
+              px_est < px_all and px_est == xs.notna().sum() and xs.notna().sum() >= 1 and xs.get("AAA") == xs.get("AAA") and not np.isnan(xs.get("AAA", np.nan)), f"{px_all} -> {px_est}; AAA {xs.get('AAA')}")
+        lots_none = lots_est.copy(); lots_none["date_exact"] = False
+        r_none = run_x(lots_none, True)
+        check("with only estimated dates no portfolio XIRR is shown and the status says it cannot be calculated", (r_none.port_x == {} or not r_none.port_x) and any("cannot be calculated" in x for x in r_none.summary if str(x).startswith("STATUS")))
+        bl = [x for x in r_est.summary if "Broker-reported XIRR" in str(x)]
+        check("the summary states broker-XIRR coverage (count, % of value) and that XIRRs are never averaged; flag off: no such line",
+              len(bl) == 1 and "never averaged" in bl[0] and "% of value" in bl[0] and not any("Broker-reported XIRR" in str(x) for x in r_all.summary), str(bl))
+        ev_t = ac.apply_promoter_edits({}, pd.DataFrame([dict(symbol="AAA", promoter_holding_now=45.0, promoter_holding_1y=50.0)]))
+        from pdiag.register import build_evidence_register
+        ctx_t = staged(mw, tmp); apply_cost_review(ctx_t, ac.FormHooks()); res_t = stage_analysis(ctx_t)
+        ev_all = dict(ctx_t.evid); ev_all["AAA"] = dict(ev_all.get("AAA", {}), **ev_t["AAA"])
+        reg = build_evidence_register(ctx_t.HD, res_t.sheets["Scorecard_A"], {}, ctx_t.auto_evid, ev_all, ctx_t.total_value)
+        row = reg[(reg.Symbol == "AAA") & (reg.FlagType == "Promoter holding")]
+        check("a promoter figure you typed is labelled 'Typed by you', not 'NSE via dalal', in the Evidence Register", len(row) == 1 and "Typed by you" in row.Source.iloc[0], str(row.Source.tolist()))
+
         wide = ("Company,NSE Ticker,Peer 1,Peer 2,Peer 3,Peer 4,Peer 5,Basis\n"
                 "Alpha Ltd,AAA,BBB,CCC,PIDILITIND?,HERO Motocorp? Use HEROMOTOCO,DDD,ok\n"
                 "Beta Ltd,BETA? (verify),AAA,CCC,,,,x\n"
