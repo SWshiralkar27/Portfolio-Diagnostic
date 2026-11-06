@@ -246,6 +246,20 @@ def _with_exact_column(lots):
     return lots
 
 
+def mark_file_dates(lots):
+    """Buy dates that come in your holdings file count as ESTIMATES unless the file has a column date_exact (yes/no) saying otherwise.
+    A wrong 'exact' would produce a false XIRR; a wrong 'estimate' only leaves the own XIRR blank. Returns (lots, how many dates are treated as estimates)."""
+    lots = lots.copy()
+    has_col = "date_exact" in lots.columns
+    yes_ = lambda v: str(v).strip().lower() in ("yes", "y", "true", "1", "t", "exact")
+    col = lots["date_exact"].map(yes_) if has_col else pd.Series(False, index=lots.index)
+    lots["date_exact"] = pd.Series([np.nan] * len(lots), index=lots.index, dtype=object)
+    dated = lots.buy_date.notna()
+    for i in lots.index[dated]:
+        lots.at[i, "date_exact"] = bool(col.at[i])
+    return lots, int((dated & ~col).sum())
+
+
 def undated_lots(lots):
     m = lots.buy_date.isna() & ~lots.asset_type.isin(["cash", "bond"])
     d = lots.loc[m, ["symbol", "quantity", "buy_price"]].copy()

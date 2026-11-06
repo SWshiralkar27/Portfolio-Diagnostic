@@ -56,7 +56,7 @@ def make_provider(stored):
 def wipe():
     t = S.pop("_tmp", None)
     if t: shutil.rmtree(t, ignore_errors=True)
-    for k in ("ctx", "pack", "n_saved", "out", "shown_cost", "snap_b"): S.pop(k, None)
+    for k in ("ctx", "pack", "n_saved", "n_est", "out", "shown_cost", "snap_b"): S.pop(k, None)
 
 
 def read_as(label, fn, *a):
@@ -100,6 +100,7 @@ if S.stage == "upload":
             st.error("Please upload your holdings file first."); st.stop()
         try:
             lots = read_as("Holdings file", lambda: holdings_from_df(read_table(hold)))
+            lots, n_est = ac.mark_file_dates(lots)
             pk = pick("pack", f_pack, "pack.zip")
             pack = read_as("Carry-over pack", ac.parse_pack, pk) if pk is not None else ac.empty_pack()
             lots, n_saved = ac.apply_saved_buy_dates(lots, pack["buy_dates"])
@@ -108,7 +109,7 @@ if S.stage == "upload":
             ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
                               manual_evid=read_as("Evidence file", ac.read_evidence, ev) if ev is not None else {},
                               peers=peers,
-                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True),
+                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True, price_date_check=True),
                               verified=read_as("Verified-flags file", read_table, vf) if vf is not None else None)
             if prep and ac.peers_note(prep): ctx.notes_global.append(ac.peers_note(prep))
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
@@ -116,7 +117,7 @@ if S.stage == "upload":
             stage_evidence(ctx)
         except Exception as e:
             wipe(); fail("Reading your files", e)
-        S.ctx, S.pack, S.n_saved, S.stage = ctx, pack, n_saved, "form_a"
+        S.ctx, S.pack, S.n_saved, S.n_est, S.stage = ctx, pack, n_saved, n_est, "form_a"
         st.rerun()
 
 elif S.stage == "form_a":
@@ -124,6 +125,7 @@ elif S.stage == "form_a":
     st.subheader("Step 2 of 3 - fill in what could not be fetched (all optional)")
     n_eq = int((~ctx.lots.asset_type.isin(["cash", "bond"])).groupby(ctx.lots.symbol).any().sum())
     if S.n_saved: st.info(f"{S.n_saved} buy date(s) were filled in from your carry-over pack.")
+    if S.get("n_est"): st.info(f"{S.n_est} buy date(s) in your holdings file are treated as estimates: used for the holding period only, never for your own XIRR. If some are exact tradebook dates, add a column date_exact with yes for those rows.")
     und = ac.undated_lots(ctx.lots)
     ed_dates = und
     if len(und):

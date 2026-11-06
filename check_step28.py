@@ -248,6 +248,38 @@ def main():
         row = reg[(reg.Symbol == "AAA") & (reg.FlagType == "Promoter holding")]
         check("a promoter figure you typed is labelled 'Typed by you', not 'NSE via dalal', in the Evidence Register", len(row) == 1 and "Typed by you" in row.Source.iloc[0], str(row.Source.tolist()))
 
+        print("\n[G] Step 28g - dates in your file are estimates unless marked exact; one-day-old prices are reported")
+        from pdiag.calendar_check import expected_last_bar, stale_price_note
+        from pdiag.loaders import holdings_from_df
+        raw_h = pd.DataFrame(dict(symbol=["AAA", "AAA", "BBB"], quantity=[1, 1, 1], buy_price=[10, 11, 12], buy_date=["2015-01-01", "2016-02-02", None]))
+        lm, n_e = ac.mark_file_dates(holdings_from_df(raw_h.copy()))
+        check("file with buy dates and no date_exact column: every dated lot counts as an estimate; the undated lot is left alone",
+              n_e == 2 and list(lm.date_exact.iloc[:2]) == [False, False] and pd.isna(lm.date_exact.iloc[2]))
+        lm2, n_e2 = ac.mark_file_dates(holdings_from_df(raw_h.assign(date_exact=["yes", "no", ""])))
+        check("a date_exact column is honoured (yes = exact, no or blank = estimate)", n_e2 == 1 and list(lm2.date_exact.iloc[:2]) == [True, False])
+        lots_g, _ = ac.mark_file_dates(load_holdings(tmp / "holdings.csv"))
+        def run_g(lots):
+            c = staged(mw, tmp, lots=lots, options=RunOptions(fetch_evidence=False, exact_dates_only=True)); apply_cost_review(c, ac.FormHooks()); return stage_analysis(c)
+        rg = run_g(lots_g)
+        check("in the app, dates from a file without date_exact give no own XIRR at all, and the status says so", not ("XIRR" in rg.sheets["Performance_Risk"].columns and rg.sheets["Performance_Risk"]["XIRR"].notna().any()) and not rg.port_x
+              and any("cannot be calculated" in x for x in rg.summary if str(x).startswith("STATUS")))
+        ist = lambda s_: pd.Timestamp(s_, tz="Asia/Kolkata")
+        cases = {"2026-11-05 13:48": "2026-11-05", "2026-11-06 07:15": "2026-11-05", "2026-11-07 12:00": "2026-11-06", "2026-11-09 08:00": "2026-11-06", "2026-11-05 03:47": "2026-11-04"}
+        check("the latest expected trading day is right for a weekday afternoon, an early morning, a Saturday and a Monday morning",
+              all(str(expected_last_bar(ist(k)).date()) == v for k, v in cases.items()), str({k: str(expected_last_bar(ist(k)).date()) for k in cases}))
+        check("a price a day behind produces a plain note; a current price produces none",
+              "2026-11-04" in stale_price_note(pd.Timestamp("2026-11-04"), ist("2026-11-06 07:15")) and stale_price_note(pd.Timestamp("2026-11-05"), ist("2026-11-06 07:15")) == "")
+        class OldBars(mw.MockProvider):
+            def history(self, tkr, a, b):
+                h = super().history(tkr, a, b)
+                if h is not None: h = h.copy(); h.index = h.index - pd.Timedelta(days=10)
+                return h
+        def gaps_old(flag):
+            c = staged(mw, tmp, provider=OldBars(), options=RunOptions(fetch_evidence=False, price_date_check=flag)); apply_cost_review(c, ac.FormHooks())
+            return stage_analysis(c).sheets["Data_Gaps"].Impact.astype(str)
+        check("price-date check ON: Data_Gaps says the prices are older than the latest trading day; OFF (default): no such line",
+              gaps_old(True).str.contains("Prices are as of").any() and not gaps_old(False).str.contains("Prices are as of").any())
+
         wide = ("Company,NSE Ticker,Peer 1,Peer 2,Peer 3,Peer 4,Peer 5,Basis\n"
                 "Alpha Ltd,AAA,BBB,CCC,PIDILITIND?,HERO Motocorp? Use HEROMOTOCO,DDD,ok\n"
                 "Beta Ltd,BETA? (verify),AAA,CCC,,,,x\n"

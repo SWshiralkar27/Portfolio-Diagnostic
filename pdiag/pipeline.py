@@ -37,6 +37,7 @@ class RunOptions:
     demo: bool = False
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
+    price_date_check: bool = False      # app mode: note in Data_Gaps when the latest price is older than the latest NSE trading day
     exact_dates_only: bool = False      # app mode: own XIRR only from lots whose buy date you marked exact; adds the broker-XIRR coverage line
     unknown_sector_guard: bool = False      # app mode: no sector from you or Yahoo -> SectorType 'unknown' and a cash-flow flag is a risk tag, not a hard override
 
@@ -157,6 +158,10 @@ def stage_prices(ctx):
     if options.strict_nse and not getattr(getattr(provider, "nse", None), "available", True):
         ctx.notes_global.append("NSE ASM/GSM surveillance lists and NSE corporate actions were NOT checked: the NSE website refused this server's connection"
                                 f" (HTTP {getattr(provider.nse, 'refused', None) or 'error'}). A blank Surveillance cell means 'not checked', not 'clear'.")
+    if options.price_date_check and HD.PriceAsOf.notna().any():
+        from pdiag.calendar_check import stale_price_note
+        _sp = stale_price_note(HD.PriceAsOf.max(), pd.Timestamp.now(tz="Asia/Kolkata"))
+        if _sp: ctx.notes_global.append(_sp)
     ctx.review_date, ctx.tick, ctx.H, ctx.B, ctx.broad, ctx.HD = review_date, tick, H, B, broad, HD
     return ctx
 
