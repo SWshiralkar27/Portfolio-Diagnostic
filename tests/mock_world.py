@@ -9,6 +9,9 @@ import numpy as np
 import pandas as pd
 
 TODAY = pd.Timestamp.today().normalize()
+LAST_BDAY = TODAY
+while LAST_BDAY.weekday() >= 5:          # on a weekend the last bar is Friday's (pandas gives one bar too few if the end date is a weekend)
+    LAST_BDAY = LAST_BDAY - pd.Timedelta(days=1)
 SCHEMA = 5
 
 # symbol, target value (INR), buy-price factor vs last price, buy_date, sector, sector_type, asset_type, target_weight, broker xirr
@@ -50,7 +53,7 @@ def _hist(tkr):
     if b == "NOP": return None
     n = 120 if b == "SHT" else 1600
     rng = _rng(tkr)
-    idx = pd.bdate_range(end=TODAY, periods=n)
+    idx = pd.bdate_range(end=LAST_BDAY, periods=n)
     vol = 0.010 if tkr in INDEX_TICKERS else 0.018
     close = (100 + zlib.crc32(b.encode()) % 300) * np.exp(np.cumsum(rng.normal(0.0004, vol, n)))
     if b == "JMP": close[n - 300:] *= 0.6

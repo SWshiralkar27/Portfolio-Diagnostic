@@ -37,6 +37,7 @@ class RunOptions:
     demo: bool = False
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
+    f8_redesign: bool = False      # F8 (risk) = average of drawdown, beta and idiosyncratic-volatility sub-scores (approved 6 Nov 2026)
     price_date_check: bool = False      # app mode: note in Data_Gaps when the latest price is older than the latest NSE trading day
     exact_dates_only: bool = False      # app mode: own XIRR only from lots whose buy date you marked exact; adds the broker-XIRR coverage line
     unknown_sector_guard: bool = False      # app mode: no sector from you or Yahoo -> SectorType 'unknown' and a cash-flow flag is a risk tag, not a hard override
@@ -325,7 +326,7 @@ def stage_analysis(ctx):
         if s not in H or HD.loc[s, "AssetType"] != "equity": continue
         ev, f, P = evid.get(s, {}), fundd.get(s, {}), perf[s]
         pm = peer_med.get(s, dict(ratio=np.nan, n=0, label="", own=np.nan, med=np.nan))
-        S, E, proxies, overrides, bull, bear, engine_rs = score_stock(HD.loc[s, "SectorType"], ev, f, P, pm["ratio"], pm["n"], pm["label"])
+        S, E, proxies, overrides, bull, bear, engine_rs = score_stock(HD.loc[s, "SectorType"], ev, f, P, pm["ratio"], pm["n"], pm["label"], f8_new=options.f8_redesign)
         hzn = str(HD.loc[s, "Horizon"]).lower() if "Horizon" in HD.columns and pd.notna(HD.loc[s, "Horizon"]) else "base"
         if hzn not in SC:
             hzn = "base"
@@ -564,6 +565,8 @@ def stage_analysis(ctx):
     n_risk = int((SCD.Review_Risk != "").sum()) if len(SCD) else 0
     n_data = int((SCD.Review_DataGap != "").sum()) if len(SCD) else 0
     summary.append(f"Flags: {n_hard} hard-override, {n_risk} risk-evidenced, {n_data} data-gap.")
+    if options.f8_redesign:
+        summary.append("F8 (risk) uses the three-part rule approved on 6 Nov 2026: the average of 3-year maximum drawdown, beta and idiosyncratic volatility sub-scores (at least two of the three needed). Drawdown under 25/35/45/55%, beta under 0.8/1.0/1.2/1.5 and volatility under 20/30/40/55% score 1/2/3/4; above that 5.")
     if options.exact_dates_only and HD.UserXIRR.notna().any():
         _bx = HD.UserXIRR.notna() & HD.Priced
         summary.append(f"Broker-reported XIRR is available for {int(_bx.sum())} of {int(HD.Priced.sum())} priced holdings ({HD.Value[_bx].sum() / HD.Value.sum() * 100:.1f}% of value). XIRRs are never averaged, so no portfolio XIRR is built from them; your own XIRR is computed only from lots whose buy date you marked as exact.")

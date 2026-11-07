@@ -7,7 +7,7 @@ from pdiag.engine_link import scoring, earnings_engine, ownership_engine, cataly
 from pdiag.utils import fnum, has, yes, bucket, pct
 
 
-def score_stock(sector_type, ev, fund, perf, val_ratio, n_peers, val_label):
+def score_stock(sector_type, ev, fund, perf, val_ratio, n_peers, val_label, f8_new=False):
     S = {k: None for k in FACTORS}
     E, proxies, overrides, bull, bear = [], [], [], [], []
     data_rs = []
@@ -142,7 +142,20 @@ def score_stock(sector_type, ev, fund, perf, val_ratio, n_peers, val_label):
         E.append(("F7", S["F7"], "computed", f"avg annualised excess {pct(m)}"))
 
     dd = perf.get("maxdd_3y")
-    if not pd.isna(dd):
+    if f8_new:
+        # F8 redesign (approved 6 Nov 2026): average of three sub-scores (1 best, 5 worst); at least two of the three are needed, otherwise unscored
+        subs, txt = [], []
+        if not pd.isna(dd):
+            a_ = bucket(-dd, [0.25, 0.35, 0.45, 0.55], [1, 2, 3, 4, 5]); subs.append(a_); txt.append(f"3y max drawdown {-dd * 100:.0f}% -> {a_}")
+        bt_ = perf.get("beta", np.nan)
+        if not pd.isna(bt_):
+            b_ = bucket(bt_, [0.8, 1.0, 1.2, 1.5], [1, 2, 3, 4, 5]); subs.append(b_); txt.append(f"beta {bt_:.2f} -> {b_}")
+        iv_ = perf.get("idio_vol", np.nan)
+        if not pd.isna(iv_):
+            c_ = bucket(iv_, [0.20, 0.30, 0.40, 0.55], [1, 2, 3, 4, 5]); subs.append(c_); txt.append(f"idiosyncratic volatility {iv_ * 100:.0f}% -> {c_}")
+        if len(subs) >= 2:
+            S["F8"] = float(np.mean(subs)); E.append(("F8", S["F8"], "computed (F8 redesign)", "; ".join(txt)))
+    elif not pd.isna(dd):
         bench_dd = perf.get("bench_maxdd_3y", -0.25)
         if dd < bench_dd * 1.5: S["F8"] = 5
         elif dd < bench_dd * 1.2: S["F8"] = 4

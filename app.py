@@ -109,7 +109,7 @@ if S.stage == "upload":
             ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
                               manual_evid=read_as("Evidence file", ac.read_evidence, ev) if ev is not None else {},
                               peers=peers,
-                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True, price_date_check=True),
+                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True, price_date_check=True, f8_redesign=True),
                               verified=read_as("Verified-flags file", read_table, vf) if vf is not None else None)
             if prep and ac.peers_note(prep): ctx.notes_global.append(ac.peers_note(prep))
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)

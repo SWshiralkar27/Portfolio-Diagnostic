@@ -209,7 +209,7 @@
   "score_stock": {
    "module": "factors",
    "sha": "53e7b2044bde8548af179ed3b9a6f633362ad50dd66fb8b568808e092875af87",
-   "verbatim": true
+   "verbatim": false
   },
   "weighted": {
    "module": "factors",

@@ -357,6 +357,7 @@ def main():
         check("raw holdings and fetched data are gone from memory; only the outputs stay", "ctx" not in at.session_state and "pack" not in at.session_state and set(out) >= {"html", "xlsx", "pack"})
         xs = pd.read_excel(io.BytesIO(out["xlsx"]), sheet_name=None)
         check("the Excel download opens and holds the 13 non-empty sheets", len(xs) == 13, str(len(xs)))
+        check("the page runs with the F8 redesign switched on, and the summary says so", any("F8 (risk) uses" in str(x) for x in xs["Summary"].iloc[:, 0]))
         check("the HTML report is complete and carries the 'not advice' footer", "Portfolio Diagnostic V4" in out["html"] and "Not investment advice" in out["html"])
         nz = zipfile.ZipFile(io.BytesIO(out["pack"])).namelist()
         check("the carry-over pack comes out with evidence cache, scores, buy dates and cost decisions", {"evidence_auto.csv", "last_run_snapshot.csv", "buy_dates.csv", "cost_decisions.csv"} <= set(nz), str(nz))
