@@ -358,6 +358,7 @@ def main():
         xs = pd.read_excel(io.BytesIO(out["xlsx"]), sheet_name=None)
         check("the Excel download opens and holds the 13 non-empty sheets", len(xs) == 13, str(len(xs)))
         check("the page runs with the F8 redesign switched on, and the summary says so", any("F8 (risk) uses" in str(x) for x in xs["Summary"].iloc[:, 0]))
+        check("the page runs with the confidence ceiling on: no holding is High, and the summary says so", any("Confidence ceiling: Medium" in str(x) for x in xs["Summary"].iloc[:, 0]) and not (xs["Scorecard_A"].Confidence == "High").any())
         check("the HTML report is complete and carries the 'not advice' footer", "Portfolio Diagnostic V4" in out["html"] and "Not investment advice" in out["html"])
         nz = zipfile.ZipFile(io.BytesIO(out["pack"])).namelist()
         check("the carry-over pack comes out with evidence cache, scores, buy dates and cost decisions", {"evidence_auto.csv", "last_run_snapshot.csv", "buy_dates.csv", "cost_decisions.csv"} <= set(nz), str(nz))

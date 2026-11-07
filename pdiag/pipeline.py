@@ -24,6 +24,7 @@ from pdiag.fundamentals import fundamentals, val_metric
 from pdiag.factors import score_stock, weighted, schemes, classify
 from pdiag.actions import build_actions
 from pdiag.register import build_evidence_register
+from pdiag.confidence import confidence_ceiling_rule
 
 
 def _no_progress(stage, i, n, label):
@@ -37,6 +38,7 @@ class RunOptions:
     demo: bool = False
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
+    confidence_ceiling: bool = False      # confidence rule B1 (approved 7 Nov 2026): never High while under 90% of the full factor weight is scored; Medium needs 70% scorable coverage
     f8_redesign: bool = False      # F8 (risk) = average of drawdown, beta and idiosyncratic-volatility sub-scores (approved 6 Nov 2026)
     price_date_check: bool = False      # app mode: note in Data_Gaps when the latest price is older than the latest NSE trading day
     exact_dates_only: bool = False      # app mode: own XIRR only from lots whose buy date you marked exact; adds the broker-XIRR coverage line
@@ -346,6 +348,8 @@ def stage_analysis(ctx):
         conf = "High" if cov >= 0.85 and not proxies else "Medium" if cov >= 0.60 else "Low"
         conf_reason = f"coverage {cov * 100:.0f}%" + (f"; proxy: {','.join(proxies)}" if proxies else "") + (f"; only {pm['n']} peers" if S["F5"] is not None and 0 < pm["n"] < 5 else "")        
         if proxies and conf == "High": conf = "Medium"
+        if options.confidence_ceiling:
+            conf, conf_reason = confidence_ceiling_rule(S, SC[hzn], cov, proxies, any(r.startswith("HARD") for r in risk_rs), conf_reason)
         
         final = ("Candidate for review" if any(r.startswith("HARD") for r in risk_rs) else cls)
         score_rows.append(dict(
@@ -565,6 +569,9 @@ def stage_analysis(ctx):
     n_risk = int((SCD.Review_Risk != "").sum()) if len(SCD) else 0
     n_data = int((SCD.Review_DataGap != "").sum()) if len(SCD) else 0
     summary.append(f"Flags: {n_hard} hard-override, {n_risk} risk-evidenced, {n_data} data-gap.")
+    if options.confidence_ceiling and len(SCD):
+        _tcm = max(sum(WEIGHTS[k] for k in FACTORS if pd.notna(r_[k])) for _, r_ in SCD.iterrows()) / sum(WEIGHTS.values())
+        if _tcm < 0.90: summary.append(f"Confidence ceiling: Medium. At most {_tcm * 100:.0f}% of the full specification weight is scored today (High needs 90%); Low means scorable coverage under 70%. A thin peer set does not lower the level but is noted per holding.")
     if options.f8_redesign:
         summary.append("F8 (risk) uses the three-part rule approved on 6 Nov 2026: the average of 3-year maximum drawdown, beta and idiosyncratic volatility sub-scores (at least two of the three needed). Drawdown under 25/35/45/55%, beta under 0.8/1.0/1.2/1.5 and volatility under 20/30/40/55% score 1/2/3/4; above that 5.")
     if options.exact_dates_only and HD.UserXIRR.notna().any():

@@ -79,7 +79,8 @@ def run(args, provider_factory=None):
     hooks = TkHooks(input_assistant, args, _dir) if (input_assistant and not args.demo) else NullHooks()
     state = DiskState(out, evidence_label=args.evidence)
     options = RunOptions(fetch_evidence=args.fetch_evidence, refresh_evidence=bool(getattr(args, "refresh_evidence", False)),
-                         demo=args.demo, review_date=args.review_date, f8_redesign=bool(getattr(args, "f8_redesign", False)))
+                         demo=args.demo, review_date=args.review_date, f8_redesign=bool(getattr(args, "f8_redesign", False)),
+                         confidence_ceiling=bool(getattr(args, "confidence_ceiling", False)))
 
     lots = hooks.after_load(lots)
     ctx = new_context(lots, provider, state, manual_evid=load_evidence(args.evidence), options=options)
@@ -126,6 +127,7 @@ def main():
     ap.add_argument("--no-open", action="store_true", help="do not auto-open the HTML")
     ap.add_argument("--no-fetch", action="store_true", help="skip auto-fetching fresh evidence (uses existing evidence.csv)")
     ap.add_argument("--refresh-evidence", action="store_true", help="re-fetch NSE evidence for every symbol now (default: only symbols older than 7 days)")
+    ap.add_argument("--confidence-ceiling", action="store_true", help="confidence rule B1: never High while under 90%% of the full factor weight is scored (always on in the app)")
     ap.add_argument("--f8-redesign", action="store_true", help="score F8 (risk) as the average of drawdown, beta and idiosyncratic-volatility sub-scores (always on in the app)")
     ap.add_argument("--no-prompt", action="store_true", help="never open the pop-up for missing buy dates / promoter holding / peers")
     ap.add_argument("--prompt", action="store_true", help="ask again for items you previously chose not to be asked about")
