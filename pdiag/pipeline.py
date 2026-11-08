@@ -25,6 +25,7 @@ from pdiag.factors import score_stock, weighted, schemes, classify
 from pdiag.actions import build_actions
 from pdiag.register import build_evidence_register
 from pdiag.confidence import confidence_ceiling_rule
+from pdiag.riskstats import risk_stats
 
 
 def _no_progress(stage, i, n, label):
@@ -39,6 +40,7 @@ class RunOptions:
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
     confidence_ceiling: bool = False      # confidence rule B1 (approved 7 Nov 2026): never High while under 90% of the full factor weight is scored; Medium needs 70% scorable coverage
+    risk_contribution: bool = False      # Step 18 (rows 1-4 approved 8 Nov 2026): average pairwise correlation, PC1 share, effective number of risk contributors, risk contribution %
     f8_redesign: bool = False      # F8 (risk) = average of drawdown, beta and idiosyncratic-volatility sub-scores (approved 6 Nov 2026)
     price_date_check: bool = False      # app mode: note in Data_Gaps when the latest price is older than the latest NSE trading day
     exact_dates_only: bool = False      # app mode: own XIRR only from lots whose buy date you marked exact; adds the broker-XIRR coverage line
@@ -61,6 +63,7 @@ class RunResult:
     port_x: dict
     summary: list
     liq: dict
+    rc: object = None
 
 
 def new_context(lots, provider, state, manual_evid=None, peers=None, options=None, verified=None, progress=None):
@@ -401,6 +404,11 @@ def stage_analysis(ctx):
     port["Top-10 weight % (of risk assets)"] = ra_w.head(10).sum()
     port["HHI (risk-asset weights)"] = float(((ra_w / 100) ** 2).sum())
     port["Effective number of positions (1/HHI)"] = 1 / port["HHI (risk-asset weights)"]
+    RC_df = pd.DataFrame()
+    if options.risk_contribution:
+        _rs = risk_stats({s: H[s] for s in ret_cols}, HD.loc[ret_cols, "Value"], CFG["RISK_WINDOW_YEARS"])
+        if _rs: port.update(_rs["port"]); RC_df = _rs["rc"]
+        else: notes_global.append("Risk statistics (average pairwise correlation, PC1 share, risk contribution) were not computed: fewer than 3 holdings have at least one year of daily price history.")
     
     sec = (HD[HD.AssetType == "equity"].groupby(HD.Sector.replace("", "Unclassified")).Weight.sum().sort_values(ascending=False))
     cap = (HD.groupby(HD.CapTier.replace("", "Unclassified").where(HD.AssetType == "equity", HD.AssetType)).Weight.sum().sort_values(ascending=False))
@@ -412,6 +420,9 @@ def stage_analysis(ctx):
     if port["Top-5 weight % (of risk assets)"] > CFG["CONC_TOP5_PCT"]:
         extra_.append(pd.DataFrame(dict(Dimension="Top-5 combined", Bucket=["Top 5 holdings"], Weight=[port["Top-5 weight % (of risk assets)"]], Flag=f"> {CFG['CONC_TOP5_PCT']}% (model setting)")))
     if extra_: CONC = pd.concat([CONC] + extra_, ignore_index=True)
+    if len(RC_df):
+        _top = RC_df.sort_values("RiskContribution", ascending=False).head(10)
+        CONC = pd.concat([CONC, pd.DataFrame(dict(Dimension="Risk contribution (% of portfolio volatility, top 10)", Bucket=list(_top.index), Weight=_top.RiskContribution.values, Flag=[f"capital weight {w_:.1f}%" for w_ in _top.Weight]))], ignore_index=True)
 
     n_hard = int(SCD.Review_Risk.str.contains("HARD").sum()) if len(SCD) else 0
     n_risk = int((SCD.Review_Risk != "").sum()) if len(SCD) else 0
@@ -571,6 +582,8 @@ def stage_analysis(ctx):
     n_risk = int((SCD.Review_Risk != "").sum()) if len(SCD) else 0
     n_data = int((SCD.Review_DataGap != "").sum()) if len(SCD) else 0
     summary.append(f"Flags: {n_hard} hard-override, {n_risk} risk-evidenced, {n_data} data-gap.")
+    if options.risk_contribution and len(RC_df):
+        summary.append(f"Risk concentration (daily closing prices, last {CFG['RISK_WINDOW_YEARS']} years, price return so dividends are excluded; {int(port['Risk statistics: holdings used (of those with prices)'])} holdings with at least one year of history, {port['Risk statistics: share of priced equity value covered (%)']:.0f}% of priced equity value): average pairwise correlation {port['Average pairwise correlation']:.2f}; PC1 share of variance {port['PC1 share of return variance (single-factor dominance)'] * 100:.0f}%; effective number of risk contributors {port['Effective number of risk contributors']:.1f} against {port['Effective number of positions (1/HHI)']:.1f} effective positions by capital. Correlation clusters are not computed yet.")
     if options.confidence_ceiling and len(SCD):
         _tcm = max(sum(WEIGHTS[k] for k in FACTORS if pd.notna(r_[k])) for _, r_ in SCD.iterrows()) / sum(WEIGHTS.values())
         if _tcm < 0.90: summary.append(f"Confidence ceiling: Medium. At most {_tcm * 100:.0f}% of the full specification weight is scored today (High needs 90%); Low means scorable coverage under 70%. A thin peer set does not lower the level but is noted per holding.")
@@ -599,7 +612,7 @@ def stage_analysis(ctx):
     sheets = {"Summary": SUMM, "Portfolio": PORT, "Holdings": HOLD, "Scorecard_A": SCD, "Evidence": EVD, "Performance_Risk": PERF, "Liquidity": LQ, "Concentration": CONC, "Tax_Lots": pd.DataFrame(), "Corporate_Actions": CA, "Monitoring_Triggers": TRIG, "Data_Gaps": GAPS, "Evidence_Register": REG, "Method": METHOD}
 
     meta = dict(demo=options.demo, source=provider.name, bench_src=broad["src"])
-    return RunResult(sheets=sheets, meta=meta, pr=pr, bm_r=bm_r, port=port, port_x=port_x, summary=summary, liq=liq)
+    return RunResult(sheets=sheets, meta=meta, pr=pr, bm_r=bm_r, port=port, port_x=port_x, summary=summary, liq=liq, rc=RC_df)
 
 
 def run_staged(ctx, hooks):
