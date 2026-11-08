@@ -118,7 +118,7 @@ def score_stock(sector_type, ev, fund, perf, val_ratio, n_peers, val_label, f8_n
         if not pd.isna(fnum(ev.get("car_pct"))):
             subs.append(bucket(fnum(ev["car_pct"]), [11.5, 13, 15, 18], [5, 4, 3, 2, 1])); txt.append(f"CAR {ev['car_pct']}%")
         if subs:
-            S["F6"] = float(np.mean(subs)); E.append(("F6", S["F6"], "user-supplied", ", ".join(txt)))
+            S["F6"] = float(np.mean(subs)); E.append(("F6", S["F6"], "user-supplied", ", ".join(txt) + (f" (as of {ev['fin_asof']})" if has(ev.get("fin_asof")) else "") + (f"; source: {ev['fin_source']}" if has(ev.get("fin_source")) else "")))
     elif sector_type not in NO_STD_TYPES:
         subs, txt = [], []
         nd, ic, ce = fund.get("nd_ebitda", np.nan), fund.get("int_cov", np.nan), fund.get("cfo_ebitda", np.nan)

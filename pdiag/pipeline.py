@@ -341,7 +341,8 @@ def stage_analysis(ctx):
         data_rs = [x for x in engine_rs if "Engine Error" in x]
         risk_rs += [f"HARD OVERRIDE: {o}" for o in overrides]
         if cov < CFG["MIN_COVERAGE"]: data_rs.append(f"Insufficient evidence: only {cov * 100:.0f}% scorable")
-        miss = [f"{k} ({FACTOR_NAMES[k]})" for k in SCORABLE if S[k] is None]
+        _na6 = yes(ev.get("f6_not_applicable")) and S["F6"] is None       # e.g. an asset manager or an insurer: financial health by GNPA / capital adequacy does not apply
+        miss = [f"{k} ({FACTOR_NAMES[k]})" for k in SCORABLE if S[k] is None and not (k == "F6" and _na6)]
         if miss: data_rs.append("Unscored: " + "; ".join(miss))
         if any(x in HD.loc[s, "Surveillance"].upper() for x in ("T2T", "ASM", "GSM")): risk_rs.append(f"Surveillance: {HD.loc[s, 'Surveillance']}")
         if f.get("eq_note"): risk_rs.append(f"Earnings-quality note: {f['eq_note']}")
@@ -350,6 +351,7 @@ def stage_analysis(ctx):
         if proxies and conf == "High": conf = "Medium"
         if options.confidence_ceiling:
             conf, conf_reason = confidence_ceiling_rule(S, SC[hzn], cov, proxies, any(r.startswith("HARD") for r in risk_rs), conf_reason)
+        if _na6: conf_reason += "; F6 (Financial Health) not applicable to this kind of business, not counted as missing"
         
         final = ("Candidate for review" if any(r.startswith("HARD") for r in risk_rs) else cls)
         score_rows.append(dict(

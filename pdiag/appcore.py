@@ -82,6 +82,10 @@ def read_evidence(f):
     df = read_table(f)
     if "symbol" not in df.columns:
         raise FatalInputError(f"The evidence file needs a column named symbol (one row per stock). Yours has: {_cols(df)}.")
+    dup = sorted({str(s).strip().upper() for s in df["symbol"][df["symbol"].astype(str).str.strip().str.upper().duplicated(keep=False)]})
+    if dup:
+        raise FatalInputError("The evidence file has the same symbol on more than one row (" + ", ".join(dup[:8]) + "). Keep one row per stock and put every column "
+                              "(pledge, GNPA, CAR ...) on that row; otherwise the last row would silently replace the others.")
     return evidence_from_df(df)
 
 
