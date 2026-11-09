@@ -1,4 +1,4 @@
-"""check_step18a.py - tests for the risk concentration statistics approved on 8 Nov 2026 (rows 1 to 4; clusters are NOT built).
+"""check_step18a.py - tests for the risk concentration statistics approved on 8 Nov 2026 (rows 1 to 4) and the correlation clusters (option A: average linkage, average correlation above 0.70).
 SYNTHETIC data only; no network. Basis: daily CLOSING prices (price return), last 3 years, holdings with at least 252 daily returns,
 current market-value weights, pairwise-complete correlation and covariance.
 Flag: RunOptions.risk_contribution (command line: --risk-stats; always on in the app). Default OFF = nothing added."""
@@ -29,7 +29,7 @@ def main():
     from pdiag.loaders import load_holdings
     from pdiag.pipeline import RunOptions, new_context, stage_evidence, stage_prices, apply_cost_review, stage_analysis
     from pdiag.report_html import render_result_html
-    from pdiag.riskstats import risk_stats
+    from pdiag.riskstats import risk_stats, correlation_clusters
     from pdiag.state import MemoryState
     print("=" * 78 + "\nSTEP 18a CHECK - risk concentration statistics\n" + "=" * 78)
     rng = np.random.default_rng(7)
@@ -68,6 +68,29 @@ def main():
     prices_only = {s: pd.DataFrame({"close": 100 * (1 + r_).cumprod(), "adj": 100 * (1 + r_ * 0).cumprod()}) for s, r_ in ind.items()}
     check("price return is used (the adjusted-close column is ignored)", abs(risk_stats(prices_only, vals(ind))["port"]["Average pairwise correlation"] - r["port"]["Average pairwise correlation"]) < 1e-12)
 
+    def drawn(corr, n=1000, seed=3):
+        L = np.linalg.cholesky(np.array(corr, float)); z = np.random.default_rng(seed).normal(0, 0.01, (n, len(corr))) @ L.T
+        return [mk(z[:, i]) for i in range(len(corr))]
+    blk = lambda k, rho: np.full((k, k), rho) + (1 - rho) * np.eye(k)
+    cm = np.zeros((8, 8)); cm[:3, :3] = blk(3, 0.85); cm[3:6, 3:6] = blk(3, 0.80); cm[6:, 6:] = np.eye(2)
+    grp = correlation_clusters(cm)
+    check("two tight blocks and two loners: two groups found ({0,1,2} and {3,4,5}); the loners are not reported as groups", sorted(map(tuple, grp)) == [(0, 1, 2), (3, 4, 5)], str(grp))
+    chain = np.array([[1, .8, .3], [.8, 1, .8], [.3, .8, 1]])
+    check("average linkage does not chain: X-Y and Y-Z at 0.8 but X-Z at 0.3 gives only the closest pair, because the third would pull the average to 0.63",
+          sorted(map(tuple, correlation_clusters(chain))) in ([(0, 1)], [(1, 2)]), str(correlation_clusters(chain)))
+    check("everything at exactly 0.70 is not grouped (the rule is 'above 0.70'); at 0.71 it is", correlation_clusters(blk(4, 0.70)) == [] and correlation_clusters(blk(4, 0.71)) == [[0, 1, 2, 3]])
+    rnd = np.random.default_rng(11); A = rnd.normal(size=(30, 12)); big = np.corrcoef(A + 1.2 * rnd.normal(size=(30, 1)))
+    check("every reported group has an average pairwise correlation above 0.70 inside it (random correlated data, many groups)",
+          all(big[np.ix_(g, g)][np.triu_indices(len(g), k=1)].mean() > 0.70 for g in correlation_clusters(big)) or correlation_clusters(big) == [], str(correlation_clusters(big)))
+    ser = drawn(cm); names = [f"G{i}" for i in range(8)]
+    rg = risk_stats(prices(dict(zip(names, ser))), vals(names))
+    cl = rg["clusters"]
+    check("through the full calculation: two groups; each lists its members, capital weight, risk share and average correlation above 0.70, sorted by risk share",
+          len(cl) == 2 and set(map(frozenset, cl.Members)) == {frozenset(["G0", "G1", "G2"]), frozenset(["G3", "G4", "G5"])} and (cl.AvgCorr > 0.70).all() and cl.RiskShare.is_monotonic_decreasing and cl.Weight.round(1).tolist() == [37.5, 37.5], str(cl[["Label", "AvgCorr", "Weight", "RiskShare"]]))
+    check("the group risk shares are consistent with the holding risk contributions (they add up to those of the members)", abs(cl.RiskShare.sum() - rg["rc"].loc[sum(cl.Members, []), "RiskContribution"].sum()) < 1e-9)
+    check("the summary sentence names the biggest group and its risk share; with no group it says so plainly",
+          "2 group(s) cover 6 of 8 holdings" in rg["cluster_text"] and "no group of holdings has an average correlation above 0.70" in risk_stats(prices(ind), vals(ind))["cluster_text"], rg["cluster_text"])
+
     tmp = Path(tempfile.mkdtemp(prefix="step18_"))
     try:
         mw.write_inputs(tmp)
@@ -85,7 +108,9 @@ def main():
         check("the Concentration sheet gets the top-10 risk contributions with each one's capital weight alongside (no new sheet or column)", 1 <= len(rcrows) <= 10 and rcrows.Flag.str.startswith("capital weight").all() and list(conc.columns) == list(off.sheets["Concentration"].columns))
         check("the existing Concentration measures in the HTML are now filled (they showed a dash before)", "Avg pairwise correlation</dt><dd>&ndash;" in render_result_html(off) and "Avg pairwise correlation</dt><dd>&ndash;" not in render_result_html(on))
         sm = [str(x) for x in on.summary if str(x).startswith("Risk concentration")]
-        check("the summary states the basis (closing prices, 3 years, price return, holdings used, value covered) and that clusters are not computed yet", len(sm) == 1 and "price return" in sm[0] and "at least one year" in sm[0] and "clusters are not computed" in sm[0], str(sm))
+        check("the summary states the basis (closing prices, 3 years, price return, holdings used, value covered) and that clusters are not computed yet", len(sm) == 1 and "price return" in sm[0] and "at least one year" in sm[0] and "clusters are not computed" not in sm[0], str(sm))
+        cs = [str(x) for x in on.summary if str(x).startswith("Correlation clusters")]
+        check("the summary carries a separate correlation-cluster line (the mock's independent holdings form no group); nothing when off", len(cs) == 1 and "average linkage" in cs[0] and not any("Correlation clusters" in str(x) for x in off.summary), str(cs))
         check("nothing else changes with the flag on: scores, labels and weighted scores are identical", on.sheets["Scorecard_A"].set_index("Symbol").Weighted.reindex(off.sheets["Scorecard_A"].Symbol).fillna(-1).values.tolist() == off.sheets["Scorecard_A"].Weighted.fillna(-1).values.tolist())
     except Exception:
         traceback.print_exc(); check("test run finished without an unexpected error", False, "see the traceback above")

@@ -423,6 +423,8 @@ def stage_analysis(ctx):
     if len(RC_df):
         _top = RC_df.sort_values("RiskContribution", ascending=False).head(10)
         CONC = pd.concat([CONC, pd.DataFrame(dict(Dimension="Risk contribution (% of portfolio volatility, top 10)", Bucket=list(_top.index), Weight=_top.RiskContribution.values, Flag=[f"capital weight {w_:.1f}%" for w_ in _top.Weight]))], ignore_index=True)
+        _cl = _rs["clusters"]
+        if len(_cl): CONC = pd.concat([CONC, pd.DataFrame(dict(Dimension="Correlation cluster (capital weight %; average linkage, average correlation above 0.70)", Bucket=list(_cl.Label), Weight=_cl.Weight.values, Flag=list(_cl.Flag)))], ignore_index=True)
 
     n_hard = int(SCD.Review_Risk.str.contains("HARD").sum()) if len(SCD) else 0
     n_risk = int((SCD.Review_Risk != "").sum()) if len(SCD) else 0
@@ -583,7 +585,8 @@ def stage_analysis(ctx):
     n_data = int((SCD.Review_DataGap != "").sum()) if len(SCD) else 0
     summary.append(f"Flags: {n_hard} hard-override, {n_risk} risk-evidenced, {n_data} data-gap.")
     if options.risk_contribution and len(RC_df):
-        summary.append(f"Risk concentration (daily closing prices, last {CFG['RISK_WINDOW_YEARS']} years, price return so dividends are excluded; {int(port['Risk statistics: holdings used (of those with prices)'])} holdings with at least one year of history, {port['Risk statistics: share of priced equity value covered (%)']:.0f}% of priced equity value): average pairwise correlation {port['Average pairwise correlation']:.2f}; PC1 share of variance {port['PC1 share of return variance (single-factor dominance)'] * 100:.0f}%; effective number of risk contributors {port['Effective number of risk contributors']:.1f} against {port['Effective number of positions (1/HHI)']:.1f} effective positions by capital. Correlation clusters are not computed yet.")
+        summary.append(f"Risk concentration (daily closing prices, last {CFG['RISK_WINDOW_YEARS']} years, price return so dividends are excluded; {int(port['Risk statistics: holdings used (of those with prices)'])} holdings with at least one year of history, {port['Risk statistics: share of priced equity value covered (%)']:.0f}% of priced equity value): average pairwise correlation {port['Average pairwise correlation']:.2f}; PC1 share of variance {port['PC1 share of return variance (single-factor dominance)'] * 100:.0f}%; effective number of risk contributors {port['Effective number of risk contributors']:.1f} against {port['Effective number of positions (1/HHI)']:.1f} effective positions by capital.")
+        summary.append(_rs["cluster_text"])
     if options.confidence_ceiling and len(SCD):
         _tcm = max(sum(WEIGHTS[k] for k in FACTORS if pd.notna(r_[k])) for _, r_ in SCD.iterrows()) / sum(WEIGHTS.values())
         if _tcm < 0.90: summary.append(f"Confidence ceiling: Medium. At most {_tcm * 100:.0f}% of the full specification weight is scored today (High needs 90%); Low means scorable coverage under 70%. A thin peer set does not lower the level but is noted per holding.")
