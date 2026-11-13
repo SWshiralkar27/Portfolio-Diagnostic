@@ -8,7 +8,9 @@ def _safe_float(val):
     except: 
         return None
 
-def score_earnings(ev, fund):
+def score_earnings(ev, fund, revenue_leg=False):
+    # revenue_leg=False is the original behaviour. True (used for the F1 shadow test) adds Yahoo's revenue growth as a sales-growth leg,
+    # but only when no quarterly sales growth was typed into evidence.csv.
     scores = []
     reasons = []
 
@@ -26,6 +28,16 @@ def score_earnings(ev, fund):
         elif avg_sales >= -10: scores.append(4)
         else: scores.append(5)
         reasons.append(f"Sales Growth {avg_sales:.1f}%")
+    elif revenue_leg:
+        rc = _safe_float(fund.get("rev_cagr"))
+        if rc is not None and rc == rc:
+            g = rc * 100
+            if g > 15: scores.append(1)
+            elif g > 5: scores.append(2)
+            elif g >= -2: scores.append(3)
+            elif g >= -10: scores.append(4)
+            else: scores.append(5)
+            reasons.append(f"Revenue CAGR {g:.1f}% (Yahoo annual statements)")
 
     # 2. PROFIT GROWTH (from Yahoo data)
     ni_cagr = _safe_float(fund.get("ni_cagr"))
