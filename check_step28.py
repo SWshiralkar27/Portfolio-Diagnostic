@@ -332,7 +332,7 @@ def main():
         files = dict(holdings=(tmp / "holdings.csv").read_bytes(), pack=pack0, evidence=(tmp / "evidence.csv").read_bytes(), peers=(tmp / "peers.csv").read_bytes())
         empty = tmp / "cwd"; empty.mkdir(); os.chdir(empty)
 
-        def drive(pack_bytes, factory=None, hold=None):
+        def drive(pack_bytes, factory=None, hold=None, f1=None):
             f = dict(files, pack=pack_bytes, **({"holdings": hold} if hold else {}))
             at = AppTest.from_file(str(HERE / "app.py"), default_timeout=180)
             at.session_state["_provider_factory"] = factory or mw.MockProvider
@@ -341,6 +341,7 @@ def main():
             at.run()
             first = (not at.exception, at.session_state["stage"], [b.key for b in at.button])
             at.checkbox(key="opt_fetch").uncheck().run()
+            if f1: at.selectbox(key="opt_f1rev").select(f1).run()
             at.button(key="start").click().run()
             s1 = (not at.exception, at.session_state["stage"])
             at.button(key="continue_a").click().run()
@@ -367,6 +368,14 @@ def main():
         xs2 = pd.read_excel(io.BytesIO(at2.session_state["out"]["xlsx"]), sheet_name=None) if a3 == (True, "done") else {}
         check("second run with the pack from the first: finishes and shows real score changes (Score_Delta filled)", a3 == (True, "done") and xs2 and xs2["Scorecard_A"]["Score_Delta"].notna().any(), str((a1, a2, a3)))
         check("second run reuses the evidence cache: Data_Gaps and sheets match the first run", xs2 and list(xs2) == list(xs))
+        atf, ff, f1a, f1b, f1c = drive(pack0, f1="Non-financial holdings only")
+        of = atf.session_state["out"] if f1c == (True, "done") else {}
+        xf = pd.read_excel(io.BytesIO(of["xlsx"]), sheet_name=None) if of else {}
+        check("on the page, choosing 'Non-financial holdings only' runs through and the summary says so; the default run has no such line",
+              f1c == (True, "done") and any("F1 uses Yahoo annual revenue growth" in str(x) and "non-financial holdings only" in str(x) for x in xf["Summary"].iloc[:, 0])
+              and not any("F1 uses Yahoo annual revenue growth" in str(x) for x in xs["Summary"].iloc[:, 0]), str((f1a, f1b, f1c)))
+        evf = xf["Evidence"] if xf else pd.DataFrame(columns=["Factor", "Evidence"])
+        check("...and several F1 evidence lines now show the revenue leg", evf[evf.Factor.str.startswith("F1 Earnings") & evf.Evidence.astype(str).str.contains("Revenue CAGR")].shape[0] >= 3)
         pk1 = ac.parse_pack(out["pack"])
         check("the first run's pack carries last good company info for the stocks it looked up", len(pk1["company_info"]) >= 14 and all(v["info"] for v in pk1["company_info"].values()), str(len(pk1["company_info"])))
         atb, fb, b1, b2, b3 = drive(out["pack"], factory=Blind)

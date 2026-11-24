@@ -41,6 +41,7 @@ class RunOptions:
     review_date: Optional[str] = None
     strict_nse: bool = False      # app mode: say so in Data_Gaps when the NSE website could not be used
     confidence_ceiling: bool = False      # confidence rule B1 (approved 7 Nov 2026): never High while under 90% of the full factor weight is scored; Medium needs 70% scorable coverage
+    f1_revenue_leg: str = "off"      # your choice: "off" (default), "nonfin" (non-financial holdings only) or "all": Yahoo revenue growth as a sales-growth leg of F1
     f1_revenue_shadow: bool = False      # measure, without changing any score, what Yahoo revenue growth as an F1 leg would do
     risk_contribution: bool = False      # Step 18 (rows 1-4 approved 8 Nov 2026): average pairwise correlation, PC1 share, effective number of risk contributors, risk contribution %
     f8_redesign: bool = False      # F8 (risk) = average of drawdown, beta and idiosyncratic-volatility sub-scores (approved 6 Nov 2026)
@@ -334,7 +335,7 @@ def stage_analysis(ctx):
         if s not in H or HD.loc[s, "AssetType"] != "equity": continue
         ev, f, P = evid.get(s, {}), fundd.get(s, {}), perf[s]
         pm = peer_med.get(s, dict(ratio=np.nan, n=0, label="", own=np.nan, med=np.nan))
-        S, E, proxies, overrides, bull, bear, engine_rs = score_stock(HD.loc[s, "SectorType"], ev, f, P, pm["ratio"], pm["n"], pm["label"], f8_new=options.f8_redesign)
+        S, E, proxies, overrides, bull, bear, engine_rs = score_stock(HD.loc[s, "SectorType"], ev, f, P, pm["ratio"], pm["n"], pm["label"], f8_new=options.f8_redesign, f1_rev=(options.f1_revenue_leg == "all" or (options.f1_revenue_leg == "nonfin" and HD.loc[s, "SectorType"] not in FIN_TYPES)))
         hzn = str(HD.loc[s, "Horizon"]).lower() if "Horizon" in HD.columns and pd.notna(HD.loc[s, "Horizon"]) else "base"
         if hzn not in SC:
             hzn = "base"
@@ -604,6 +605,8 @@ def stage_analysis(ctx):
         if _tcm < 0.90: summary.append(f"Confidence ceiling: Medium. At most {_tcm * 100:.0f}% of the full specification weight is scored today (High needs 90%); Low means scorable coverage under 70%. A thin peer set does not lower the level but is noted per holding.")
     if options.f8_redesign:
         summary.append("F8 (risk) uses the three-part rule approved on 6 Nov 2026: the average of 3-year maximum drawdown, beta and idiosyncratic volatility sub-scores (at least two of the three needed). Drawdown under 25/35/45/55%, beta under 0.8/1.0/1.2/1.5 and volatility under 20/30/40/55% score 1/2/3/4; above that 5.")
+    if options.f1_revenue_leg != "off":
+        summary.append("F1 uses Yahoo annual revenue growth as one more sales-growth leg for " + ("all holdings" if options.f1_revenue_leg == "all" else "non-financial holdings only") + " (your choice in the run options), wherever a revenue figure exists and no quarterly sales growth was typed. For lenders, insurers and asset managers revenue is not comparable with sales.")
     if options.f1_revenue_shadow and shadow_rows:
         _sh = pd.DataFrame(shadow_rows); _d = (_sh.F1_alt - _sh.F1).abs(); _lab = _sh.Final != _sh.Final_alt
         summary.append(f"F1 shadow test (not used in any score): adding Yahoo revenue growth as a sales-growth leg would change F1 for {int((_d > 1e-9).sum())} of {len(_sh)} holdings (by 0.5 or more for {int((_d >= 0.5).sum())}) and the label of {int(_lab.sum())} holdings ({_sh.Weight[_lab].sum():.1f}% of capital). Nothing changes unless you approve it.")

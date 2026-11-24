@@ -7,13 +7,13 @@ from pdiag.engine_link import scoring, earnings_engine, ownership_engine, cataly
 from pdiag.utils import fnum, has, yes, bucket, pct
 
 
-def score_stock(sector_type, ev, fund, perf, val_ratio, n_peers, val_label, f8_new=False):
+def score_stock(sector_type, ev, fund, perf, val_ratio, n_peers, val_label, f8_new=False, f1_rev=False):
     S = {k: None for k in FACTORS}
     E, proxies, overrides, bull, bear = [], [], [], [], []
     data_rs = []
 
     try:
-        s1, r1 = earnings_engine.score_earnings(ev, fund)
+        s1, r1 = earnings_engine.score_earnings(ev, fund, revenue_leg=f1_rev)
         S["F1"] = s1
         if s1 is not None:
             E.append(("F1", s1, "earnings_engine", r1))

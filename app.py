@@ -94,6 +94,8 @@ if S.stage == "upload":
         f_ver = st.file_uploader("verified_flags.csv (optional): flags you have checked", type=["csv", "xlsx"], key="up_ver")
     st.checkbox("Fetch fresh NSE evidence (promoter holding, disclosures, results dates)", value=True, key="opt_fetch")
     st.checkbox("Re-fetch NSE evidence for every stock, even if the pack has it (slower)", value=False, key="opt_force")
+    st.selectbox("F1 revenue-growth leg (your decision; off until you choose)", ["Off", "Non-financial holdings only", "All holdings"], key="opt_f1rev",
+                 help="Adds Yahoo's annual revenue growth as one more equal part of F1 (earnings and growth), wherever a revenue figure exists and no quarterly sales growth was typed. On your 13 November run it would have changed F1 for 74 of 90 holdings and 9 labels (1.4% of capital); for lenders, insurers and asset managers revenue is not comparable with sales, so Non-financial is the careful choice.")
     if st.button("Start", type="primary", key="start"):
         hold = pick("holdings", f_hold, "holdings.csv")
         if hold is None:
@@ -109,7 +111,7 @@ if S.stage == "upload":
             ctx = new_context(lots, make_provider(pack["company_info"]), MemoryState(auto_csv=pack["auto_csv"], snapshot_csv=pack["snapshot_csv"]),
                               manual_evid=read_as("Evidence file", ac.read_evidence, ev) if ev is not None else {},
                               peers=peers,
-                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True, price_date_check=True, f8_redesign=True, confidence_ceiling=True, risk_contribution=True, f1_revenue_shadow=True),
+                              options=RunOptions(fetch_evidence=S.opt_fetch, refresh_evidence=S.opt_force, strict_nse=True, unknown_sector_guard=True, exact_dates_only=True, price_date_check=True, f1_revenue_leg={"Off": "off", "Non-financial holdings only": "nonfin", "All holdings": "all"}[S.opt_f1rev], f8_redesign=True, confidence_ceiling=True, risk_contribution=True, f1_revenue_shadow=True),
                               verified=read_as("Verified-flags file", read_table, vf) if vf is not None else None)
             if prep and ac.peers_note(prep): ctx.notes_global.append(ac.peers_note(prep))
             bar = st.progress(0.0, text="Starting"); ctx.progress = ac.progress_to(bar)
